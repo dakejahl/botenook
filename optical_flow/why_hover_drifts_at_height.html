@@ -1,0 +1,649 @@
+<title>Why Hover Drifts at Height</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&display=swap">
+<style>
+  :root {
+    --paper: #F4F6F1;
+    --panel: #E9EEE4;
+    --ink: #1B2420;
+    --muted: #5F6C65;
+    --rule: #D3DAD0;
+    --grid: #E2E7DF;
+    --green: #6C9A4B;
+    --accent: #2C6FB3;
+    --accent-soft: #DCE7F4;
+    --s1: #2a78d6;
+    --s2: #eb6834;
+    --s3: #1baf7a;
+    --display: "Bricolage Grotesque", "Helvetica Neue", Arial, sans-serif;
+    --body: "Atkinson Hyperlegible", "Segoe UI", Roboto, system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #12181A;
+      --panel: #1B2326;
+      --ink: #E4E9E4;
+      --muted: #98A59D;
+      --rule: #2C3739;
+      --grid: #222C2F;
+      --green: #7FB35A;
+      --accent: #6FA8E6;
+      --accent-soft: #1C2E42;
+      --s1: #3987e5;
+      --s2: #d95926;
+      --s3: #199e70;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #12181A;
+    --panel: #1B2326;
+    --ink: #E4E9E4;
+    --muted: #98A59D;
+    --rule: #2C3739;
+    --grid: #222C2F;
+    --green: #7FB35A;
+    --accent: #6FA8E6;
+    --accent-soft: #1C2E42;
+    --s1: #3987e5;
+    --s2: #d95926;
+    --s3: #199e70;
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.55;
+    margin: 0;
+    padding: 0 20px 80px;
+  }
+  .page { max-width: 780px; margin: 0 auto; display: flex; flex-direction: column; gap: 44px; }
+  header { padding-top: 56px; display: flex; flex-direction: column; gap: 14px; }
+  .eyebrow { font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+  h1 {
+    font-family: var(--display);
+    font-size: clamp(38px, 6vw, 56px);
+    font-weight: 700; line-height: 1.02; letter-spacing: -0.02em;
+    margin: 0; text-wrap: balance;
+  }
+  .dek { font-size: 20px; line-height: 1.4; color: var(--muted); max-width: 34em; margin: 0; }
+  h2 {
+    font-family: var(--display); font-size: 28px; font-weight: 600; line-height: 1.15;
+    letter-spacing: -0.01em; margin: 0 0 6px; text-wrap: balance;
+  }
+  h3 { font-family: var(--display); font-size: 20px; font-weight: 600; margin: 10px 0 0; line-height: 1.2; }
+  section { display: flex; flex-direction: column; gap: 14px; }
+  section p { margin: 0; max-width: 64ch; }
+  strong { font-weight: 700; }
+  .num { font-variant-numeric: tabular-nums; }
+  code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.92em; background: var(--panel); padding: 1px 5px; border-radius: 3px; }
+
+  .inshort { background: var(--panel); border-left: 4px solid var(--accent); padding: 18px 22px; border-radius: 3px; }
+  .inshort .eyebrow { margin-bottom: 8px; color: var(--accent); }
+  .inshort ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; max-width: 64ch; }
+
+  figure { margin: 8px 0 0; display: flex; flex-direction: column; gap: 10px; }
+  figure svg { max-width: 100%; height: auto; display: block; color: var(--ink); font-family: var(--body); }
+  figure svg text { fill: currentColor; }
+  figcaption { font-size: 14.5px; line-height: 1.45; color: var(--muted); max-width: 64ch; }
+  .fig-wrap { overflow-x: auto; }
+
+  table { border-collapse: collapse; font-size: 15.5px; width: 100%; max-width: 720px; }
+  th, td { text-align: left; padding: 8px 14px 8px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-weight: 700; color: var(--muted); font-size: 12.5px; letter-spacing: 0.06em; text-transform: uppercase; }
+  td.num, th.num { font-variant-numeric: tabular-nums; text-align: right; padding-right: 22px; }
+  .table-wrap { overflow-x: auto; }
+
+  .fixes { display: flex; flex-direction: column; gap: 20px; padding: 0; margin: 0; list-style: none; max-width: 66ch; }
+  .fixes li { padding-left: 18px; border-left: 2px solid var(--rule); display: flex; flex-direction: column; gap: 6px; }
+  .fixes li h3 { margin: 0; }
+  .fixes li p { margin: 0; }
+  .tag {
+    display: inline-block; font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 700;
+    color: var(--accent); background: var(--accent-soft); padding: 2px 7px; border-radius: 2px; margin-left: 8px; vertical-align: middle;
+  }
+  .effect { font-size: 14.5px; color: var(--muted); }
+  .effect b { color: var(--ink); font-weight: 700; }
+
+  /* chart */
+  .chart { position: relative; }
+  .chart .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13.5px; color: var(--muted); padding: 0 0 6px 2px; }
+  .chart .legend span::before { content: ""; display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 7px; background: var(--c); }
+  .tip {
+    position: absolute; pointer-events: none; display: none;
+    background: var(--panel); color: var(--ink); border: 1px solid var(--rule); border-radius: 4px;
+    padding: 7px 10px; font-size: 13px; line-height: 1.4; min-width: 150px; font-variant-numeric: tabular-nums;
+  }
+  .tip .h { font-weight: 700; margin-bottom: 2px; }
+  .tip .r { display: flex; justify-content: space-between; gap: 12px; }
+  .tip .r i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; background: var(--c); }
+  details.tv { font-size: 14.5px; color: var(--muted); }
+  details.tv summary { cursor: pointer; }
+  details.tv table { margin-top: 8px; max-width: 520px; }
+
+  ul.plain { margin: 0; padding-left: 20px; max-width: 64ch; display: flex; flex-direction: column; gap: 6px; }
+  footer { font-size: 14px; color: var(--muted); border-top: 1px solid var(--rule); padding-top: 16px; max-width: 64ch; }
+  a { color: var(--accent); }
+  a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (prefers-reduced-motion: no-preference) { .tip { transition: opacity 80ms linear; } }
+</style>
+
+<div class="page">
+
+  <header>
+    <div class="eyebrow">ARK Flow · PAW3902 optical flow</div>
+    <h1>Why hover drifts at height</h1>
+    <p class="dek">Position hold on optical flow is tight at 2 m and loose at 20 m, sometimes with a slow rolling oscillation. This note explains the mechanism end to end, puts numbers on each part, and lists what changes it.</p>
+  </header>
+
+  <div class="inshort">
+    <div class="eyebrow">In short</div>
+    <ul>
+      <li>The flow sensor measures how fast the ground <strong>appears to turn</strong> under it, in angle. The flight controller multiplies that by height above ground to get speed. Every error in the angle measurement is multiplied by height too.</li>
+      <li>One sensor count is <span class="num">0.122°</span> of apparent turn: <span class="num">4 mm</span> of ground at 2 m, <span class="num">4 cm</span> at 20 m. A hover drift of 0.3 m/s produces a count every other frame at 2 m and one count per 18 frames at 20 m.</li>
+      <li>The flight controller reads each frame as its own measurement and, with today's settings, assumes each one is uncertain by about <span class="num">6.5 m/s</span> at 20 m. It leans on the accelerometers instead, drifts, then jumps when a count arrives. That is the rolling.</li>
+      <li>Fixes, in order of payoff: average over a longer window when high, make the sensor's quality score mean the same thing in every camera mode, let the flight controller use the range sensor to its full 30 m, and measure the report delay over CAN.</li>
+    </ul>
+  </div>
+
+  <section>
+    <h2>How the sensor measures motion</h2>
+    <p>The PAW3902 on ARK Flow is a motion-tracking chip from the same family as the sensor in an optical mouse, with a lens that focuses on the ground. It takes 126 pictures a second (50 in its lowest-light mode), compares each picture with the previous one, and reports how far the picture slid, as whole counts in x and y. It does not report position or distance. It reports change.</p>
+    <p>One count is a fixed angle. The datasheet's resolution curve, 11.914 counts per inch per meter of height, works out to <strong>0.122° (2.13 milliradians) per count</strong>. The field of view is 42°, so a full sweep across the view is about 344 counts. The chip's resolution register is already at its maximum; there is no setting that makes a count smaller.</p>
+    <p>Alongside the counts, each report carries a <strong>quality score</strong> (the number of ground features the chip could track, divided by 4, on a scale of 0–255), the shutter time, and the average brightness. The driver uses shutter and brightness to pick one of three camera modes: Bright, Low Light, or Super Low Light. Switching modes resets the chip and costs about 50 ms of data.</p>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Field in each report</th><th>What it is</th><th>What the flight controller does with it</th></tr></thead>
+      <tbody>
+        <tr><td>Counts in x, y</td><td>How far the picture slid since the last read, in 0.122° steps</td><td>Divides by the time window to get an apparent turn rate</td></tr>
+        <tr><td>Time window</td><td>Time since the last read</td><td>The divisor above; also the window for the gyro subtraction</td></tr>
+        <tr><td>Quality score</td><td>Tracked features ÷ 4, 0–255</td><td>Sets how much to trust the report</td></tr>
+        <tr><td>Gyro integral</td><td>How much the ARK Flow board itself rotated in the same window</td><td>Subtracted, so the drone's own tilting is not mistaken for ground motion</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>From counts to speed</h2>
+    <p>The flight controller's estimator (EKF2) turns each report into a speed in four steps. The first three are in angle units. Only the last one produces meters.</p>
+
+    <figure>
+      <div class="fig-wrap">
+      <svg viewBox="0 0 760 210" role="img" aria-label="Pipeline from sensor to position controller. Sensor counts are divided by the time window to get an apparent turn rate in degrees per second. The drone's own rotation from the gyro is subtracted, giving ground motion in degrees per second. That is multiplied by height above ground from the range sensor to give speed in meters per second. The estimator blends it with the accelerometers using the quality score as trust, and the position controller acts on the result. Everything before the multiply-by-height step is in angle units.">
+        <defs>
+          <marker id="arrp" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <!-- units bracket -->
+        <line x1="20" y1="24" x2="486" y2="24" stroke="var(--accent)" stroke-width="1.5"/>
+        <line x1="20" y1="24" x2="20" y2="32" stroke="var(--accent)" stroke-width="1.5"/>
+        <line x1="486" y1="24" x2="486" y2="32" stroke="var(--accent)" stroke-width="1.5"/>
+        <text x="253" y="16" font-size="12" text-anchor="middle" fill="var(--accent)" font-weight="700">angle units: any error here is multiplied by height</text>
+        <line x1="500" y1="24" x2="740" y2="24" stroke="var(--green)" stroke-width="1.5"/>
+        <line x1="500" y1="24" x2="500" y2="32" stroke="var(--green)" stroke-width="1.5"/>
+        <line x1="740" y1="24" x2="740" y2="32" stroke="var(--green)" stroke-width="1.5"/>
+        <text x="620" y="16" font-size="12" text-anchor="middle" fill="var(--green)" font-weight="700">meters</text>
+
+        <!-- boxes row y=48..92 -->
+        <g font-size="12.5">
+          <rect x="20" y="48" width="100" height="48" rx="3" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="70" y="68" text-anchor="middle" font-weight="700">Sensor</text>
+          <text x="70" y="84" text-anchor="middle" fill="var(--muted)" font-size="11.5">counts · quality</text>
+
+          <rect x="150" y="48" width="86" height="48" rx="3" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="193" y="76" text-anchor="middle" font-weight="700">÷ window</text>
+
+          <rect x="266" y="48" width="104" height="48" rx="3" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="318" y="68" text-anchor="middle" font-weight="700">− own rotation</text>
+          <text x="318" y="84" text-anchor="middle" fill="var(--muted)" font-size="11.5">from the gyro</text>
+
+          <rect x="400" y="48" width="86" height="48" rx="3" fill="none" stroke="var(--accent)" stroke-width="2"/>
+          <text x="443" y="68" text-anchor="middle" font-weight="700" fill="var(--accent)">× height</text>
+          <text x="443" y="84" text-anchor="middle" fill="var(--muted)" font-size="11.5">above ground</text>
+
+          <rect x="516" y="48" width="94" height="48" rx="3" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="563" y="68" text-anchor="middle" font-weight="700">Estimator</text>
+          <text x="563" y="84" text-anchor="middle" fill="var(--muted)" font-size="11.5">blends w/ accel</text>
+
+          <rect x="640" y="48" width="100" height="48" rx="3" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="690" y="68" text-anchor="middle" font-weight="700">Position</text>
+          <text x="690" y="84" text-anchor="middle" font-weight="700">controller</text>
+        </g>
+        <!-- arrows between boxes -->
+        <g stroke="currentColor" stroke-width="1.3" marker-end="url(#arrp)">
+          <line x1="120" y1="72" x2="148" y2="72"/>
+          <line x1="236" y1="72" x2="264" y2="72"/>
+          <line x1="370" y1="72" x2="398" y2="72"/>
+          <line x1="486" y1="72" x2="514" y2="72"/>
+          <line x1="610" y1="72" x2="638" y2="72"/>
+        </g>
+        <g font-size="11" fill="var(--muted)">
+          <text x="135" y="43" text-anchor="middle">counts</text>
+          <text x="251" y="43" text-anchor="middle">°/s</text>
+          <text x="385" y="43" text-anchor="middle">°/s</text>
+          <text x="501" y="43" text-anchor="middle">m/s</text>
+          <text x="625" y="43" text-anchor="middle">velocity</text>
+        </g>
+        <!-- side inputs from below -->
+        <g stroke="currentColor" stroke-width="1.3" marker-end="url(#arrp)">
+          <line x1="318" y1="150" x2="318" y2="98"/>
+          <line x1="443" y1="150" x2="443" y2="98"/>
+          <line x1="563" y1="150" x2="563" y2="98"/>
+        </g>
+        <g font-size="12">
+          <rect x="258" y="150" width="120" height="40" rx="3" fill="var(--panel)" stroke="var(--rule)"/>
+          <text x="318" y="167" text-anchor="middle" font-weight="700">Gyro on ARK Flow</text>
+          <text x="318" y="182" text-anchor="middle" fill="var(--muted)" font-size="11">same time window</text>
+          <rect x="390" y="150" width="106" height="40" rx="3" fill="var(--panel)" stroke="var(--rule)"/>
+          <text x="443" y="167" text-anchor="middle" font-weight="700">Range sensor</text>
+          <text x="443" y="182" text-anchor="middle" fill="var(--muted)" font-size="11">reads to 30 m</text>
+          <rect x="508" y="150" width="110" height="40" rx="3" fill="var(--panel)" stroke="var(--rule)"/>
+          <text x="563" y="167" text-anchor="middle" font-weight="700">Quality score</text>
+          <text x="563" y="182" text-anchor="middle" fill="var(--muted)" font-size="11">sets the trust</text>
+        </g>
+      </svg>
+      </div>
+      <figcaption>Counts become an apparent turn rate, the drone's own rotation is subtracted, and only then does height turn the result into meters per second. The estimator weighs that speed against the accelerometers according to the quality score.</figcaption>
+    </figure>
+
+    <p>The subtraction step matters more than it looks. When the drone rolls 1° per second, the picture slides across the sensor exactly as if the ground had moved 1° per second. The gyro on the ARK Flow board records how much the board rotated in the same window, and the flight controller subtracts it. What is left is ground motion. Any mismatch between the two windows, in length or in timing, leaves a residual that the flight controller reads as real motion.</p>
+  </section>
+
+  <section>
+    <h2>Height multiplies everything before it</h2>
+    <p>A count is an angle, so the ground distance it covers grows with height. So does the speed it represents, and so does every error made in angle units.</p>
+
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Height</th><th class="num">One count on the ground</th><th class="num">Ground in view</th><th class="num">One count in one frame</th><th class="num">Frames per count at 0.3 m/s</th></tr></thead>
+      <tbody>
+        <tr><td class="num">2 m</td><td class="num">4 mm</td><td class="num">1.5 m</td><td class="num">0.54 m/s</td><td class="num">2</td></tr>
+        <tr><td class="num">10 m</td><td class="num">2 cm</td><td class="num">7.7 m</td><td class="num">2.7 m/s</td><td class="num">9</td></tr>
+        <tr><td class="num">20 m</td><td class="num">4 cm</td><td class="num">15 m</td><td class="num">5.4 m/s</td><td class="num">18</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <figure>
+      <div class="fig-wrap">
+      <svg viewBox="0 0 720 320" role="img" aria-label="Two identical drawings of a drone looking down through the same 42 degree cone. At 2 meters the cone covers 1.5 meters of ground and one count is 4 millimeters. At 20 meters the cone covers 15 meters and one count is 4 centimeters. A 30 centimeter drift is 70 counts at 2 meters and 7 counts at 20 meters.">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+          <g id="drone">
+            <rect x="-16" y="-5" width="32" height="10" rx="2" fill="currentColor"/>
+            <line x1="-34" y1="-8" x2="-16" y2="-2" stroke="currentColor" stroke-width="2"/>
+            <line x1="34" y1="-8" x2="16" y2="-2" stroke="currentColor" stroke-width="2"/>
+            <line x1="-44" y1="-9" x2="-24" y2="-9" stroke="currentColor" stroke-width="2.5"/>
+            <line x1="24" y1="-9" x2="44" y2="-9" stroke="currentColor" stroke-width="2.5"/>
+          </g>
+          <g id="scene">
+            <polygon points="0,0 -110,175 110,175" fill="var(--accent)" fill-opacity="0.13" stroke="var(--accent)" stroke-width="1.5"/>
+            <rect x="-150" y="175" width="300" height="18" fill="var(--green)" fill-opacity="0.55"/>
+            <line x1="-150" y1="175" x2="150" y2="175" stroke="var(--green)" stroke-width="2"/>
+            <g stroke="currentColor" stroke-width="1.5">
+              <line x1="-110" y1="175" x2="-110" y2="187"/><line x1="-90" y1="175" x2="-90" y2="187"/>
+              <line x1="-70" y1="175" x2="-70" y2="187"/><line x1="-50" y1="175" x2="-50" y2="187"/>
+              <line x1="-30" y1="175" x2="-30" y2="187"/><line x1="-10" y1="175" x2="-10" y2="187"/>
+              <line x1="10" y1="175" x2="10" y2="187"/><line x1="30" y1="175" x2="30" y2="187"/>
+              <line x1="50" y1="175" x2="50" y2="187"/><line x1="70" y1="175" x2="70" y2="187"/>
+              <line x1="90" y1="175" x2="90" y2="187"/><line x1="110" y1="175" x2="110" y2="187"/>
+            </g>
+            <use href="#drone" x="0" y="-8"/>
+            <line x1="-135" y1="0" x2="-135" y2="175" stroke="currentColor" stroke-width="1" stroke-dasharray="3 3"/>
+            <line x1="-140" y1="0" x2="-130" y2="0" stroke="currentColor" stroke-width="1"/>
+            <line x1="-140" y1="175" x2="-130" y2="175" stroke="currentColor" stroke-width="1"/>
+          </g>
+        </defs>
+        <g transform="translate(180,52)">
+          <use href="#scene"/>
+          <text x="-128" y="92" font-size="13" font-weight="700">2 m up</text>
+          <text x="0" y="214" font-size="12.5" text-anchor="middle" fill="var(--muted)">sees 1.5 m of ground</text>
+          <text x="0" y="238" font-size="14" text-anchor="middle" font-weight="700" fill="var(--accent)">one count = 4 mm</text>
+        </g>
+        <g transform="translate(540,52)">
+          <use href="#scene"/>
+          <text x="-128" y="92" font-size="13" font-weight="700">20 m up</text>
+          <text x="0" y="214" font-size="12.5" text-anchor="middle" fill="var(--muted)">sees 15 m of ground</text>
+          <text x="0" y="238" font-size="14" text-anchor="middle" font-weight="700" fill="var(--accent)">one count = 4 cm</text>
+        </g>
+        <line x1="150" y1="304" x2="210" y2="304" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr)"/>
+        <text x="220" y="308" font-size="13">drifts 30 cm = <tspan font-weight="700">70 counts</tspan></text>
+        <line x1="510" y1="304" x2="570" y2="304" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr)"/>
+        <text x="580" y="308" font-size="13">drifts 30 cm = <tspan font-weight="700">7 counts</tspan></text>
+      </svg>
+      </div>
+      <figcaption>Drawn identically on purpose: from the sensor's side, nothing changes with height. The sensor always divides its view into the same number of counts; only the ground each count covers changes.</figcaption>
+    </figure>
+
+    <p>At 20 m a slow hover drift is a count every 18 frames. Seventeen frames in a row say "no motion," then one says "one count." Over any window longer than a few tenths of a second the average is exactly right. Frame by frame it is a coin flip.</p>
+
+    <figure>
+      <div class="fig-wrap">
+      <svg viewBox="0 0 720 250" role="img" aria-label="Three rows of 18 frames covering the same 0.14 seconds. At 2 meters a count lands in every second frame and the flight controller sees steady motion. At 20 meters one count lands in the last frame and the flight controller sees no motion 17 times, then a jump. At 20 meters with a longer window, the 18 frames are combined into one report of steady motion.">
+        <defs>
+          <g id="frame"><rect x="0" y="0" width="24" height="24" rx="2" fill="none" stroke="var(--rule)" stroke-width="1.2"/></g>
+          <g id="tick"><rect x="0" y="0" width="24" height="24" rx="2" fill="var(--accent)" fill-opacity="0.14" stroke="var(--accent)" stroke-width="1.2"/><circle cx="12" cy="12" r="4.5" fill="var(--accent)"/></g>
+        </defs>
+        <text x="158" y="20" font-size="12" fill="var(--muted)">18 frames, 0.14 s of flight, drone drifting at 0.3 m/s</text>
+        <line x1="158" y1="27" x2="662" y2="27" stroke="var(--rule)" stroke-width="1"/>
+        <text x="146" y="58" font-size="13" text-anchor="end" font-weight="700">At 2 m</text>
+        <g transform="translate(158,42)">
+          <use href="#tick" x="0"/><use href="#frame" x="28"/><use href="#tick" x="56"/><use href="#frame" x="84"/>
+          <use href="#tick" x="112"/><use href="#frame" x="140"/><use href="#tick" x="168"/><use href="#frame" x="196"/>
+          <use href="#tick" x="224"/><use href="#frame" x="252"/><use href="#tick" x="280"/><use href="#frame" x="308"/>
+          <use href="#tick" x="336"/><use href="#frame" x="364"/><use href="#tick" x="392"/><use href="#frame" x="420"/>
+          <use href="#tick" x="448"/><use href="#frame" x="476"/>
+        </g>
+        <text x="158" y="86" font-size="12.5" fill="var(--muted)">flight controller sees: moving, steady</text>
+        <text x="146" y="128" font-size="13" text-anchor="end" font-weight="700">At 20 m</text>
+        <g transform="translate(158,112)">
+          <use href="#frame" x="0"/><use href="#frame" x="28"/><use href="#frame" x="56"/><use href="#frame" x="84"/>
+          <use href="#frame" x="112"/><use href="#frame" x="140"/><use href="#frame" x="168"/><use href="#frame" x="196"/>
+          <use href="#frame" x="224"/><use href="#frame" x="252"/><use href="#frame" x="280"/><use href="#frame" x="308"/>
+          <use href="#frame" x="336"/><use href="#frame" x="364"/><use href="#frame" x="392"/><use href="#frame" x="420"/>
+          <use href="#frame" x="448"/><use href="#tick" x="476"/>
+        </g>
+        <text x="158" y="156" font-size="12.5" fill="var(--muted)">flight controller sees: not moving ×17, then 5.4 m/s for one frame</text>
+        <text x="146" y="198" font-size="13" text-anchor="end" font-weight="700">At 20 m,</text>
+        <text x="146" y="214" font-size="13" text-anchor="end" font-weight="700">140 ms window</text>
+        <g transform="translate(158,186)">
+          <rect x="0" y="0" width="500" height="24" rx="3" fill="var(--accent)" fill-opacity="0.14" stroke="var(--accent)" stroke-width="1.5"/>
+          <circle cx="250" cy="12" r="4.5" fill="var(--accent)"/>
+          <text x="262" y="16.5" font-size="12.5" fill="var(--accent)" font-weight="700">1 count per 0.14 s = 0.3 m/s</text>
+        </g>
+        <text x="158" y="230" font-size="12.5" fill="var(--muted)">flight controller sees: moving, steady</text>
+      </svg>
+      </div>
+      <figcaption>The same 0.14 seconds three ways. One combined report carries the same information as 18 separate ones, without the run of zeros and the single spike.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Three things compound it</h2>
+
+    <h3>1. The reports are quantized, but the noise model is a constant</h3>
+    <p>The estimator does not know that a report is a whole number of counts. It assigns each one a fixed uncertainty in angle units, blended between two settings by the quality score: <code>EKF2_OF_N_MIN</code> (0.15 rad/s, "best quality") and <code>EKF2_OF_N_MAX</code> (0.5 rad/s, "worst"). With the quality scores the sensor actually produces, the blend lands around 0.32 rad/s, or 18° per second. Multiply by height and that is the uncertainty the estimator attaches to every report: 0.65 m/s at 2 m, 6.5 m/s at 20 m.</p>
+    <p>The real per-frame quantization error is a quarter of that. And it shrinks in proportion to the window: average 50 ms instead of 8 and it drops six-fold. The assumed noise does not shrink at all, because nothing tells the estimator the window changed.</p>
+
+    <figure class="chart" id="noise-chart">
+      <div class="legend">
+        <span style="--c: var(--s1)">Uncertainty the estimator assumes today</span>
+        <span style="--c: var(--s2)">Actual quantization, 8 ms window (today)</span>
+        <span style="--c: var(--s3)">Actual quantization, 50 ms window</span>
+      </div>
+      <div class="fig-wrap">
+      <svg viewBox="0 0 720 300" role="img" aria-label="Line chart of speed uncertainty per report against height from 0 to 25 meters. All three lines rise in proportion to height. At 20 meters: the estimator assumes 6.4 meters per second, actual quantization with an 8 millisecond window is 1.6, and with a 50 millisecond window 0.25." id="noise-svg">
+        <!-- grid -->
+        <g stroke="var(--grid)" stroke-width="1">
+          <line x1="70" y1="250" x2="660" y2="250"/>
+          <line x1="70" y1="192.5" x2="660" y2="192.5"/>
+          <line x1="70" y1="135" x2="660" y2="135"/>
+          <line x1="70" y1="77.5" x2="660" y2="77.5"/>
+          <line x1="70" y1="20" x2="660" y2="20"/>
+        </g>
+        <line x1="70" y1="20" x2="70" y2="250" stroke="var(--rule)" stroke-width="1"/>
+        <!-- axis labels -->
+        <g font-size="12" fill="var(--muted)" font-variant="tabular-nums">
+          <text x="60" y="254" text-anchor="end">0</text>
+          <text x="60" y="196.5" text-anchor="end">2</text>
+          <text x="60" y="139" text-anchor="end">4</text>
+          <text x="60" y="81.5" text-anchor="end">6</text>
+          <text x="60" y="24" text-anchor="end">8 m/s</text>
+          <text x="70" y="272" text-anchor="middle">0</text>
+          <text x="188" y="272" text-anchor="middle">5</text>
+          <text x="306" y="272" text-anchor="middle">10</text>
+          <text x="424" y="272" text-anchor="middle">15</text>
+          <text x="542" y="272" text-anchor="middle">20</text>
+          <text x="660" y="272" text-anchor="middle">25 m</text>
+          <text x="365" y="292" text-anchor="middle">height above ground</text>
+          <text x="14" y="135" text-anchor="middle" transform="rotate(-90 14 135)">speed uncertainty per report</text>
+        </g>
+        <!-- 20 m reference -->
+        <line x1="542" y1="20" x2="542" y2="250" stroke="var(--rule)" stroke-width="1"/>
+        <!-- series -->
+        <line x1="70" y1="250" x2="660" y2="20" stroke="var(--s1)" stroke-width="2" stroke-linecap="round"/>
+        <line x1="70" y1="250" x2="660" y2="194" stroke="var(--s2)" stroke-width="2" stroke-linecap="round"/>
+        <line x1="70" y1="250" x2="660" y2="241" stroke="var(--s3)" stroke-width="2" stroke-linecap="round"/>
+        <!-- markers at 20 m with value labels -->
+        <circle cx="542" cy="66" r="5" fill="var(--s1)" stroke="var(--paper)" stroke-width="2"/>
+        <text x="552" y="62" font-size="12.5" font-weight="700">6.4 m/s</text>
+        <circle cx="542" cy="205" r="5" fill="var(--s2)" stroke="var(--paper)" stroke-width="2"/>
+        <text x="552" y="201" font-size="12.5" font-weight="700">1.6 m/s</text>
+        <circle cx="542" cy="243" r="5" fill="var(--s3)" stroke="var(--paper)" stroke-width="2"/>
+        <text x="552" y="239" font-size="12.5" font-weight="700">0.25 m/s</text>
+        <!-- hover layer -->
+        <g id="hover" style="display:none">
+          <line id="hover-x" x1="0" y1="20" x2="0" y2="250" stroke="currentColor" stroke-width="1" stroke-opacity="0.5"/>
+          <circle id="h1" r="4.5" fill="var(--s1)" stroke="var(--paper)" stroke-width="2"/>
+          <circle id="h2" r="4.5" fill="var(--s2)" stroke="var(--paper)" stroke-width="2"/>
+          <circle id="h3" r="4.5" fill="var(--s3)" stroke="var(--paper)" stroke-width="2"/>
+        </g>
+        <rect id="hit" x="70" y="20" width="590" height="230" fill="transparent"/>
+      </svg>
+      </div>
+      <div class="tip" id="tip"></div>
+      <figcaption>Speed uncertainty per report, from the same three angle-unit numbers multiplied by height. The estimator's assumption is a fixed 0.32 rad/s (with today's quality scores); real quantization is 0.078 rad/s for an 8 ms window and 0.012 rad/s for 50 ms.</figcaption>
+      <details class="tv">
+        <summary>Values as a table</summary>
+        <table>
+          <thead><tr><th>Height</th><th class="num">Assumed today</th><th class="num">8 ms window</th><th class="num">50 ms window</th></tr></thead>
+          <tbody>
+            <tr><td class="num">2 m</td><td class="num">0.64 m/s</td><td class="num">0.16 m/s</td><td class="num">0.02 m/s</td></tr>
+            <tr><td class="num">10 m</td><td class="num">3.2 m/s</td><td class="num">0.78 m/s</td><td class="num">0.12 m/s</td></tr>
+            <tr><td class="num">20 m</td><td class="num">6.4 m/s</td><td class="num">1.6 m/s</td><td class="num">0.25 m/s</td></tr>
+          </tbody>
+        </table>
+      </details>
+    </figure>
+
+    <p>Told that each report is worth ±6.5 m/s, the estimator barely moves on any one of them and carries its velocity on the accelerometers, which drift on their own. Position hold then acts on a drifting velocity. When a count does land, the correction is a lump rather than a nudge. Slow slide, then a lurch.</p>
+
+    <h3>2. The quality score means different things in different modes</h3>
+    <p>The quality score is a raw feature count. The chip's own datasheet gives a different "unusable below this" floor for each camera mode: 25 in Bright, 70 in Low Light, 85 in Super Low Light. A score of 85 is a decent frame in Bright mode and a barely usable one in Super Low Light. The driver passes the raw number through, so the estimator cannot tell those apart.</p>
+    <p>Separately, the estimator's trust ramp runs from <code>EKF2_OF_QMIN</code> (default 1) to 255. In the one log we have, Bright-mode scores sit between 90 and 130, which the ramp reads as 35–51% trust. A frame with 500 tracked features is treated as mediocre, and the assumed noise lands near the "worst" end of the blend. That is where the 0.32 rad/s above comes from.</p>
+
+    <figure>
+      <div class="fig-wrap">
+      <svg viewBox="0 0 720 240" role="img" aria-label="A quality score scale from 0 to 255. The estimator's trust rises in a straight line from 0 percent at score 1 to 100 percent at 255. Measured Bright-mode scores of 90 to 130 fall at 35 to 51 percent trust. The datasheet's per-mode floors sit at 25 for Bright, 70 for Low Light, and 85 for Super Low Light.">
+        <!-- axis at y=170; score s -> x = 60 + s/255*620 -->
+        <line x1="60" y1="170" x2="680" y2="170" stroke="var(--rule)" stroke-width="1.2"/>
+        <g font-size="12" fill="var(--muted)">
+          <text x="60" y="190" text-anchor="middle">0</text>
+          <text x="184" y="190" text-anchor="middle">51</text>
+          <text x="308" y="190" text-anchor="middle">102</text>
+          <text x="432" y="190" text-anchor="middle">153</text>
+          <text x="556" y="190" text-anchor="middle">204</text>
+          <text x="680" y="190" text-anchor="middle">255</text>
+          <text x="370" y="212" text-anchor="middle">quality score reported by the sensor</text>
+        </g>
+        <!-- measured band 90..130 -> x=279..376, drawn on the axis -->
+        <rect x="279" y="156" width="97" height="14" fill="var(--s2)" fill-opacity="0.25"/>
+        <line x1="279" y1="170" x2="279" y2="156" stroke="var(--s2)" stroke-width="1.5"/>
+        <line x1="376" y1="170" x2="376" y2="156" stroke="var(--s2)" stroke-width="1.5"/>
+        <text x="386" y="167" font-size="12.5" font-weight="700">measured, Bright mode: 90–130</text>
+        <!-- trust ramp: (62,170) -> (680,60) -->
+        <line x1="62" y1="170" x2="680" y2="60" stroke="var(--s1)" stroke-width="2" stroke-linecap="round"/>
+        <text x="680" y="50" font-size="12" fill="var(--muted)" text-anchor="end">estimator's trust: 0% at 1, 100% at 255</text>
+        <!-- trust dots: y = 170 - (s-1)/254*110 -->
+        <circle cx="376" cy="114" r="5" fill="var(--s1)" stroke="var(--paper)" stroke-width="2"/>
+        <text x="388" y="108" font-size="12.5" font-weight="700">51% trust at 130</text>
+        <circle cx="279" cy="131" r="5" fill="var(--s1)" stroke="var(--paper)" stroke-width="2"/>
+        <text x="270" y="122" font-size="12.5" font-weight="700" text-anchor="end">35% trust at 90</text>
+        <!-- datasheet floors: 25 -> x=121, 70 -> 230, 85 -> 267 -->
+        <g stroke="currentColor" stroke-width="1.5">
+          <line x1="121" y1="170" x2="121" y2="178"/>
+          <line x1="230" y1="170" x2="230" y2="178"/>
+          <line x1="267" y1="170" x2="267" y2="178"/>
+        </g>
+        <g stroke="currentColor" stroke-width="1" stroke-dasharray="2 3">
+          <line x1="121" y1="72" x2="121" y2="170"/>
+          <line x1="230" y1="96" x2="230" y2="170"/>
+          <line x1="267" y1="96" x2="267" y2="170"/>
+        </g>
+        <g font-size="11.5">
+          <text x="60" y="28" font-weight="700">datasheet "unusable below" floors</text>
+          <text x="126" y="66" fill="var(--muted)">Bright · 25</text>
+          <text x="196" y="90" fill="var(--muted)" text-anchor="end">Low Light · 70</text>
+          <text x="272" y="90" fill="var(--muted)">Super Low Light · 85</text>
+        </g>
+      </svg>
+      </div>
+      <figcaption>The trust ramp treats 255 as perfect and everything the sensor actually reports as middling. The per-mode floors show that the same raw number does not mean the same thing across modes.</figcaption>
+    </figure>
+
+    <h3>3. Rotation subtraction, timing, and the loop that turns drift into rolling</h3>
+    <p>The subtraction of the drone's own rotation has to be precise in a way it does not at low height. A residual of 0.5°/s (a small gyro bias, or the flow window and gyro window offset by 10 ms during an attitude correction) is 0.02 m/s at 2 m and 0.17 m/s at 20 m. That residual sits inside the position control loop.</p>
+
+    <figure>
+      <div class="fig-wrap">
+      <svg viewBox="0 0 720 230" role="img" aria-label="A loop. The drone drifts, a count lands or does not, the estimator's velocity jumps, the position controller tilts the drone to correct, the tilt slides the picture and the rotation subtraction leaves a residual scaled by height, which the estimator reads as more motion, and the loop repeats.">
+        <defs>
+          <marker id="arrl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <g font-size="12.5">
+          <rect x="20" y="90" width="130" height="50" rx="3" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="85" y="111" text-anchor="middle" font-weight="700">Drone drifts</text>
+          <text x="85" y="128" text-anchor="middle" fill="var(--muted)" font-size="11.5">or is already tilting</text>
+
+          <rect x="195" y="20" width="150" height="50" rx="3" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="270" y="41" text-anchor="middle" font-weight="700">A count lands</text>
+          <text x="270" y="58" text-anchor="middle" fill="var(--muted)" font-size="11.5">or 17 frames of none</text>
+
+          <rect x="390" y="20" width="150" height="50" rx="3" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="465" y="41" text-anchor="middle" font-weight="700">Velocity estimate jumps</text>
+          <text x="465" y="58" text-anchor="middle" fill="var(--muted)" font-size="11.5">±5.4 m/s per count at 20 m</text>
+
+          <rect x="570" y="90" width="130" height="50" rx="3" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="635" y="111" text-anchor="middle" font-weight="700">Controller tilts</text>
+          <text x="635" y="128" text-anchor="middle" fill="var(--muted)" font-size="11.5">to cancel the jump</text>
+
+          <rect x="240" y="160" width="250" height="50" rx="3" fill="none" stroke="var(--accent)" stroke-width="2"/>
+          <text x="365" y="181" text-anchor="middle" font-weight="700" fill="var(--accent)">Tilt slides the picture</text>
+          <text x="365" y="198" text-anchor="middle" fill="var(--muted)" font-size="11.5">subtraction residual × height reads as motion</text>
+        </g>
+        <g stroke="currentColor" stroke-width="1.3" fill="none" marker-end="url(#arrl)">
+          <path d="M150,105 L193,50"/>
+          <path d="M345,45 L388,45"/>
+          <path d="M540,50 L583,88"/>
+          <path d="M600,140 L492,180"/>
+          <path d="M238,180 L120,140"/>
+        </g>
+      </svg>
+      </div>
+      <figcaption>Every arrow in this loop is scaled by height except the controller's. At 2 m the residual is too small to close the loop; at 20 m it can sustain a slow oscillation.</figcaption>
+    </figure>
+
+    <p>Height itself has to be right too. The range sensor on ARK Flow reads to 30 m, but the flight controller only uses it as far as its settings allow (<code>UAVCAN_RNG_MAX</code>, and <code>SENS_FLOW_MAXHGT</code> for flow). Above whatever that cutoff is, the flight controller estimates height above ground from air pressure and from the flow sensor itself. A 2 m error at 20 m is a 10% error in every speed it computes, and letting flow estimate its own scale makes the loop above worse.</p>
+  </section>
+
+  <section>
+    <h2>What we can do</h2>
+    <p>In order of expected payoff. The first two are the ones that change the picture; the rest close gaps.</p>
+    <ul class="fixes">
+      <li>
+        <h3>Average over a longer window when the drone is high<span class="tag">flight controller software</span></h3>
+        <p>Today the flight controller re-packages flow reports at a fixed rate (<code>SENS_FLOW_RATE</code>). Make the window scale with height instead: about 8 ms at 2 m, about 80 ms at 20 m, targeting a constant amount of ground per report. The run-of-zeros-then-a-spike pattern disappears, and quantization error per report drops in proportion.</p>
+        <p class="effect"><b>Effect at 20 m:</b> per-report jitter from 1.6 m/s to about 0.16 m/s, at 12 reports per second. The estimator already timestamps each report at the middle of its window, so latency stays honest. A second step is to tell the estimator that noise shrinks with the window, so it stops assuming a constant.</p>
+      </li>
+      <li>
+        <h3>Make the quality score mean the same thing in every mode<span class="tag">ARK Flow firmware + settings</span></h3>
+        <p>In the driver, map the raw score onto one scale: 0 at the datasheet floor for the current mode, 255 at a per-mode ceiling measured from flights. Then raise <code>EKF2_OF_QMIN</code> from 1 to a real floor (around 40 on the new scale) so the trust ramp spans what the sensor actually produces.</p>
+        <p class="effect"><b>Effect:</b> a 500-feature frame is trusted like the good frame it is, and a featureless frame over uniform grass at 20 m is dropped instead of fused at low weight. Needs quality histograms from Low Light and Super Low Light flights; we only have Bright-mode data so far.</p>
+      </li>
+      <li>
+        <h3>Let the flight controller use the range sensor to 30 m<span class="tag">settings</span></h3>
+        <p>Set <code>UAVCAN_RNG_MAX</code> to 30 and <code>SENS_FLOW_MAXHGT</code> at or above the highest altitude you fly on flow. Then check a log from a 20 m hover: the estimator should show range-based terrain active the whole time, and the range sensor's signal quality should hold.</p>
+        <p class="effect"><b>Effect:</b> speed scale stays measured rather than estimated, and the flow sensor is never asked to work out its own height.</p>
+      </li>
+      <li>
+        <h3>Measure the report delay over CAN and set it<span class="tag">settings</span></h3>
+        <p>The flight controller stamps each flow report when it arrives, not when the sensor took it, and one setting (<code>EKF2_OF_DELAY</code>) accounts for the difference. The default was chosen for a sensor wired directly to the flight controller. Cross-correlating the ARK Flow's gyro integral against the flight controller's own gyro in a log gives the true delay.</p>
+        <p class="effect"><b>Effect:</b> a 10 ms timing error is worth 0.17 m/s at 20 m during an attitude correction; removing it weakens the loop in figure 6.</p>
+      </li>
+      <li>
+        <h3>Confirm the chip remembers sub-count motion<span class="tag">bench test</span></h3>
+        <p>Everything above assumes the chip carries motion smaller than one count from frame to frame and reports it when it adds up to a whole count. If it discards it, slow drift at height is invisible and only a narrower lens would help. Rotate the sensor at about 0.6°/s for a minute and check that the total is close to 280 counts.</p>
+      </li>
+    </ul>
+
+    <h3>What will not help</h3>
+    <ul class="plain">
+      <li>Raising the sensor's resolution setting. It is already at maximum.</li>
+      <li>Reporting faster. More reports of the same 0-or-1 count add noise, not information.</li>
+      <li>The illumination LED. It reaches a few meters; at 20 m the sensor runs on ambient light.</li>
+      <li>Tuning the noise settings alone. Without the quality fix and the longer window, lower noise numbers make the estimator believe the spikes.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>What to expect</h2>
+    <p>Position hold at 20 m will not match 2 m. The sensor has a tenth of the ground resolution there and that is optics. The goal is a hover that drifts slowly and evenly, without lurches, with an estimator that knows how much each report is worth.</p>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Height</th><th class="num">One count on the ground</th><th>Today</th><th>After the changes above</th></tr></thead>
+      <tbody>
+        <tr><td class="num">2 m</td><td class="num">4 mm</td><td>tight</td><td>tight</td></tr>
+        <tr><td class="num">10 m</td><td class="num">2 cm</td><td>noticeably looser</td><td>slightly looser, steady</td></tr>
+        <tr><td class="num">20 m</td><td class="num">4 cm</td><td>drift and rolling</td><td>slow, even drift, no rolling</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>How we will know: fly the same 2 m / 10 m / 20 m hover before and after, and compare position-hold scatter and the estimator's flow test ratio in the logs.</p>
+  </section>
+
+  <footer>Companion to the technical note <em>Optical flow: performance vs altitude (PAW3902)</em> in the same folder, which carries the code references and the measurements still needed. Numbers here: 2.13 mrad per count, 42° field of view, 126 fps, EKF2 flow noise blend 0.15–0.5 rad/s, Bright-mode quality scores 90–130 from one indoor log.</footer>
+
+</div>
+
+<script>
+(function () {
+  var svg = document.getElementById('noise-svg');
+  var hit = document.getElementById('hit');
+  var hover = document.getElementById('hover');
+  var hx = document.getElementById('hover-x');
+  var tip = document.getElementById('tip');
+  var chart = document.getElementById('noise-chart');
+  if (!svg || !hit) return;
+  var K = [0.32, 0.078, 0.0123];
+  var NAMES = ['Assumed today', '8 ms window', '50 ms window'];
+  var VARS = ['var(--s1)', 'var(--s2)', 'var(--s3)'];
+  var dots = [document.getElementById('h1'), document.getElementById('h2'), document.getElementById('h3')];
+  function toH(px) { return Math.max(0, Math.min(25, (px - 70) / 590 * 25)); }
+  function yOf(v) { return 250 - v / 8 * 230; }
+  function move(evt) {
+    var pt = svg.createSVGPoint();
+    pt.x = evt.clientX; pt.y = evt.clientY;
+    var p = pt.matrixTransform(svg.getScreenCTM().inverse());
+    var h = toH(p.x);
+    var x = 70 + h / 25 * 590;
+    hover.style.display = '';
+    hx.setAttribute('x1', x); hx.setAttribute('x2', x);
+    var rows = '<div class="h">' + h.toFixed(1) + ' m above ground</div>';
+    for (var i = 0; i < 3; i++) {
+      var v = K[i] * h;
+      dots[i].setAttribute('cx', x); dots[i].setAttribute('cy', yOf(v));
+      rows += '<div class="r"><span><i style="--c:' + VARS[i] + '"></i>' + NAMES[i] + '</span><span>' + (v < 1 ? v.toFixed(2) : v.toFixed(1)) + ' m/s</span></div>';
+    }
+    tip.innerHTML = rows;
+    tip.style.display = 'block';
+    var r = chart.getBoundingClientRect();
+    var left = evt.clientX - r.left + 14;
+    if (left + 180 > r.width) left = evt.clientX - r.left - 190;
+    tip.style.left = left + 'px';
+    tip.style.top = (evt.clientY - r.top - 10) + 'px';
+  }
+  function leave() { hover.style.display = 'none'; tip.style.display = 'none'; }
+  hit.addEventListener('mousemove', move);
+  hit.addEventListener('mouseleave', leave);
+  hit.addEventListener('touchstart', function (e) { if (e.touches[0]) move(e.touches[0]); }, { passive: true });
+  hit.addEventListener('touchmove', function (e) { if (e.touches[0]) move(e.touches[0]); }, { passive: true });
+  hit.addEventListener('touchend', leave);
+})();
+</script>
