@@ -4,6 +4,7 @@ Working notes. Not upstream docs.
 
 - [MAVLink module architecture](mavlink/module_architecture.md) — prerequisite reading before a mavlink module rewrite
 - [MAVLink stream catalog and profiles](mavlink/streams_metadata.md)
+- [DMA stream budget on STM32](dma/stream_budget.md) — prerequisite for concurrent BDShot capture (PX4#28080)
 - [DroneCAN node management over MAVLink](dronecan/node_management_over_mavlink.md)
 - [GNSS data reporting over MAVLink and DroneCAN](gnss/data_reporting_over_mavlink_and_dronecan.md)
 - [GNSS selection, fusion, and heading](gnss/selection_fusion_and_heading.md)
