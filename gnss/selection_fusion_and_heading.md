@@ -323,6 +323,8 @@ Plus:
 
 ## 10. Possible work sequence (when this becomes real work)
 
+Superseded by [pipeline_migration.md](pipeline_migration.md) §3, which adds the checks move (#28520) and the rename.
+
 Rough, not a PR plan:
 
 1. Land heading/position separation (#27102) and related heading-fallback cleanup — hard prerequisite for touching blending (§6.5).
