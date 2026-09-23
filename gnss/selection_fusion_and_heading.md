@@ -323,7 +323,7 @@ Plus:
 
 ## 10. Possible work sequence (when this becomes real work)
 
-Superseded by [pipeline_migration.md](pipeline_migration.md) §3, which adds the checks move (#28520) and the rename.
+Superseded by [pipeline_migration.md](pipeline_migration.md) §3.
 
 Rough, not a PR plan:
 
