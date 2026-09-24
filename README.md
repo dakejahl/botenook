@@ -9,5 +9,6 @@ Working notes. Not upstream docs.
 - [GNSS data reporting over MAVLink and DroneCAN](gnss/data_reporting_over_mavlink_and_dronecan.md)
 - [GNSS selection, fusion, and heading](gnss/selection_fusion_and_heading.md)
 - [GNSS pipeline migration](gnss/pipeline_migration.md) — ownership, topic contracts and PR order for the checks move, selection and rename
+- [GNSS coloured position error and EKF bias states](gnss/ekf_position_bias.md) — why a higher GNSS rate makes EKF2 overconfident in position, and bias states as the fix
 - [Optical flow performance vs altitude](optical_flow/performance_vs_altitude.md)
 - [Rangefinder altitude and terrain estimation](rangefinder/altitude_and_terrain_estimation.md)
