@@ -85,3 +85,25 @@ for vt, name, rates, kw in cases:
         pr, ps, vr, vs, si, ni = sim(f, vt, **args)
         print(f"{vt:10s} {name:32s} {f:3d} {pr:7.2f} {ps:7.2f} {pr/ps:5.1f} "
               f"{vr:7.3f} {vs:7.3f} {vr/vs:4.1f} {si:8.2f} {ni:5.2f}")
+
+def step_response(f_gps, r_scale, v_scale, sacc):
+    # Noise-free mean response to a 2 m GNSS position step with no change in reported accuracy:
+    # seconds until the estimate covers 63% of it.
+    step = int(round(1/(f_gps*dt)))
+    F = np.eye(2); F[0, 1] = dt; Q = np.zeros((2, 2)); Q[1, 1] = (sig_acc*dt)**2
+    P = np.diag([hacc**2, 1.0]); x = np.zeros(2)
+    Hp = np.array([1., 0]); Hv = np.array([0., 1])
+    for k in range(N):
+        x = F@x; P = F@P@F.T + Q
+        if k % step == 0:
+            for H, z, R in ((Hp, 2.0 if k*dt >= 600 else 0.0, hacc**2*r_scale), (Hv, 0.0, sacc**2*v_scale)):
+                S = H@P@H + R; K = P@H/S; x = x + K*(z - x@H); P = P - np.outer(K, H@P)
+        if k*dt >= 600 and x[0] >= 2*0.632:
+            return k*dt - 600
+    return float('inf')
+
+sacc_c = np.hypot(*VEL_TRUTH['correlated'][::2])
+print("\n2 m GNSS step, no eph change, time to 63% (s):")
+for f in (5, 10):
+    print(f"{f:3d} Hz  today {step_response(f, 1, 1, sacc_c):6.0f}  pos R x tau/dt {step_response(f, tau_p*f, 1, sacc_c):6.0f}"
+          f"  pos+vel R x tau/dt {step_response(f, tau_p*f, VEL_TRUTH['correlated'][1]*f, sacc_c):6.0f}")
