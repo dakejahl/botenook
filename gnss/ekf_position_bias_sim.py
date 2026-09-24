@@ -1,45 +1,53 @@
-# 1D INS/GNSS Kalman filter: how GNSS rate and the position error model change what the filter
-# believes about its position. Backs gnss/ekf_position_bias.md. Needs numpy.
+# 1D INS/GNSS Kalman filter: how GNSS rate and the GNSS error model change what the filter believes
+# about its position and velocity. Backs gnss/ekf_position_bias.md. Needs numpy.
 # KF covariance is data-independent, so P/K are computed once and states are batched across MC runs.
+# IMU noise is white at the filter's assumed level (EKF2_ACC_NOISE default), so the IMU never helps
+# more than the filter expects.
 import numpy as np
 rng = np.random.default_rng(2)
 dt = 0.01; T = 900.0; N = int(T/dt); RUNS = 200; WARM = 300.0
 sig_acc = 0.35
-sig_b, tau = 1.0, 60.0       # truth: slow position wander
-sig_w = 0.2                  # truth: white part of position error
-sig_v = 0.1                  # truth: GPS velocity noise (white)
+sig_b, tau_p, sig_w = 1.0, 60.0, 0.2     # truth: position wander (GM) + white
 hacc = np.hypot(sig_b, sig_w)
+VEL_TRUTH = {'white': (0.0, 1.0, 0.1),   # truth: velocity GM sigma, tau, white sigma
+             'correlated': (0.05, 20.0, 0.05)}
 
-def sim(f_gps, mode, tau_m=tau, sig_b_m=sig_b, r_scale=1.0, gate_unscaled=False):
-    # gate_unscaled: test innovations against P + hAcc^2 while fusing with the scaled R
+def sim(f_gps, vel_truth, pos='white', vel='white', r_scale=1.0, v_scale=1.0,
+        tau_m=tau_p, sig_b_m=sig_b, gate_unscaled=False):
+    # pos/vel: 'white' fuses with R = acc^2 * scale; 'bias' adds a Gauss-Markov bias state.
+    # gate_unscaled: test position innovations against P + hAcc^2 while fusing with the scaled R.
+    sig_vb, tau_v, sig_vw = VEL_TRUTH[vel_truth]
+    sacc = np.hypot(sig_vb, sig_vw)
     step = int(round(1/(f_gps*dt)))
-    aug = mode == 'bias'
-    n = 3 if aug else 2
-    phi_m = np.exp(-dt/tau_m)
+    n = 2 + (pos == 'bias') + (vel == 'bias')
     F = np.eye(n); F[0, 1] = dt
     Q = np.zeros((n, n)); Q[1, 1] = (sig_acc*dt)**2
-    if aug:
-        F[2, 2] = phi_m; Q[2, 2] = sig_b_m**2*(1-phi_m**2)
-        Hp = np.array([1., 0, 1]); Rp = sig_w**2
-        P = np.diag([hacc**2, 1.0, sig_b_m**2])
+    P = np.zeros((n, n)); P[0, 0] = hacc**2; P[1, 1] = 1.0
+    Hp = np.zeros(n); Hp[0] = 1; Hv = np.zeros(n); Hv[1] = 1
+    i = 2
+    if pos == 'bias':
+        ph = np.exp(-dt/tau_m); F[i, i] = ph; Q[i, i] = sig_b_m**2*(1-ph**2); P[i, i] = sig_b_m**2
+        Hp[i] = 1; Rp = sig_w**2; i += 1
     else:
-        Hp = np.array([1., 0]); Rp = hacc**2*r_scale
-        P = np.diag([hacc**2, 1.0])
+        Rp = hacc**2*r_scale
+    if vel == 'bias':
+        ph = np.exp(-dt/tau_v); F[i, i] = ph; Q[i, i] = sig_vb**2*(1-ph**2); P[i, i] = sig_vb**2
+        Hv[i] = 1; Rv = sig_vw**2
+    else:
+        Rv = sacc**2*v_scale
     Rgate = hacc**2 if gate_unscaled else None
-    Hv = np.zeros(n); Hv[1] = 1; Rv = sig_v**2
     x = np.zeros((RUNS, n))
-    phi = np.exp(-dt/tau); qb = sig_b*np.sqrt(1-phi**2)
-    b = rng.normal(0, sig_b, RUNS)
-    pe2 = ve2 = pp = 0.0; cnt = 0
+    pb = np.exp(-dt/tau_p); qb = sig_b*np.sqrt(1-pb**2); b = rng.normal(0, sig_b, RUNS)
+    pv = np.exp(-dt/tau_v); qv = sig_vb*np.sqrt(1-pv**2); bv = rng.normal(0, sig_vb, RUNS)
+    pe2 = ve2 = pp = vp = 0.0; cnt = 0
     s_pos = nis = 0.0; nfuse = 0
     for k in range(N):
-        b = phi*b + rng.normal(0, qb, RUNS)
-        a = rng.normal(0, sig_acc, RUNS)
-        x = x@F.T; x[:, 1] += a*dt
+        b = pb*b + rng.normal(0, qb, RUNS); bv = pv*bv + rng.normal(0, qv, RUNS)
+        x = x@F.T; x[:, 1] += rng.normal(0, sig_acc, RUNS)*dt
         P = F@P@F.T + Q
         if k % step == 0:
             for H, z, R in ((Hp, b + rng.normal(0, sig_w, RUNS), Rp),
-                            (Hv, rng.normal(0, sig_v, RUNS), Rv)):
+                            (Hv, bv + rng.normal(0, sig_vw, RUNS), Rv)):
                 S = H@P@H + R; K = P@H/S; innov = z - x@H
                 if H is Hp and k*dt > WARM:
                     Sg = S if Rgate is None else H@P@H + Rgate
@@ -47,24 +55,33 @@ def sim(f_gps, mode, tau_m=tau, sig_b_m=sig_b, r_scale=1.0, gate_unscaled=False)
                 x = x + np.outer(innov, K); P = P - np.outer(K, H@P)
         if k*dt > WARM:
             pe2 += np.mean(x[:, 0]**2); ve2 += np.mean(x[:, 1]**2)
-            pp += P[0, 0]; cnt += 1
-    return np.sqrt(pe2/cnt), np.sqrt(pp/cnt), np.sqrt(ve2/cnt), np.sqrt(s_pos/nfuse), nis/nfuse
+            pp += P[0, 0]; vp += P[1, 1]; cnt += 1
+    pr, ps, vr, vs = (np.sqrt(v/cnt) for v in (pe2, pp, ve2, vp))
+    return pr, ps, vr, vs, np.sqrt(s_pos/nfuse), nis/nfuse
 
-# (label, rates, mode, kwargs); r_scale multiplies today's R = hAcc^2
-cases = [('today (EKF2/EKF3)', (5, 10, 20), 'base', {}),
-         ('R x rate/5Hz', (10, 20), 'base', 'rate'),
-         ('R x 10', (10,), 'base', dict(r_scale=10.0)),
-         ('R x 100', (10,), 'base', dict(r_scale=100.0)),
-         ('R x tau/dt', (5, 10), 'base', 'tau'),
-         ('R x tau/dt, gate on hAcc^2', (5, 10), 'base', 'tau_gate'),
-         ('bias states, true model', (5, 10, 20), 'bias', {}),
-         ('bias states, tau 20s, sig 1.5m', (10,), 'bias', dict(tau_m=20.0, sig_b_m=1.5)),
-         ('bias states, tau 300s, sig 0.7m', (10,), 'bias', dict(tau_m=300.0, sig_b_m=0.7))]
-print(f"truth: pos err GM sigma={sig_b} m tau={tau} s + white {sig_w} m (hAcc {hacc:.2f}); vel white {sig_v} m/s")
-print(f"{'position model':32s} {'Hz':>3s} {'pos rms':>8s} {'pos sig':>8s} {'x':>5s} {'vel rms':>8s} {'innov sig':>9s} {'NIS':>5s}")
-for name, rates, mode, kw in cases:
+TAU = lambda f: dict(r_scale=tau_p*f, gate_unscaled=True)
+TAU_PV = lambda f: dict(r_scale=tau_p*f, v_scale=VEL_TRUTH['correlated'][1]*f, gate_unscaled=True)
+# (velocity truth, label, rates, kwargs or f -> kwargs)
+cases = [('white', 'today (EKF2/EKF3)', (5, 10, 20), {}),
+         ('white', 'R x rate/5Hz', (10, 20), lambda f: dict(r_scale=f/5.0)),
+         ('white', 'R x 100', (10,), dict(r_scale=100.0)),
+         ('white', 'pos R x tau/dt', (10,), lambda f: dict(r_scale=tau_p*f)),
+         ('white', 'pos R x tau/dt, gate on hAcc^2', (5, 10), TAU),
+         ('white', 'pos bias states', (5, 10, 20), dict(pos='bias')),
+         ('white', 'pos bias, tau 20s, sig 1.5m', (10,), dict(pos='bias', tau_m=20.0, sig_b_m=1.5)),
+         ('white', 'pos bias, tau 300s, sig 0.7m', (10,), dict(pos='bias', tau_m=300.0, sig_b_m=0.7)),
+         ('correlated', 'today (EKF2/EKF3)', (5, 10), {}),
+         ('correlated', 'pos R x tau/dt, gate on hAcc^2', (10,), TAU),
+         ('correlated', 'pos+vel R x tau/dt, gate hAcc^2', (5, 10), TAU_PV),
+         ('correlated', 'pos bias states', (10,), dict(pos='bias')),
+         ('correlated', 'pos+vel bias states', (5, 10), dict(pos='bias', vel='bias'))]
+print(f"position error: GM sigma {sig_b} m tau {tau_p} s + white {sig_w} m (hAcc {hacc:.2f})")
+print("velocity error: white 0.1 m/s, or correlated GM 0.05 m/s tau 20 s + white 0.05 m/s")
+print(f"{'vel truth':10s} {'filter':32s} {'Hz':>3s} {'pos rms':>7s} {'pos sig':>7s} {'x':>5s} "
+      f"{'vel rms':>7s} {'vel sig':>7s} {'x':>4s} {'gate sig':>8s} {'NIS':>5s}")
+for vt, name, rates, kw in cases:
     for f in rates:
-        args = {'rate': dict(r_scale=f/5.0), 'tau': dict(r_scale=tau*f),
-                'tau_gate': dict(r_scale=tau*f, gate_unscaled=True)}.get(kw, kw) if isinstance(kw, str) else kw
-        pr, ps, vr, si, ni = sim(f, mode, **args)
-        print(f"{name:32s} {f:3d} {pr:8.2f} {ps:8.2f} {pr/ps:5.1f} {vr:8.3f} {si:9.2f} {ni:5.2f}")
+        args = kw(f) if callable(kw) else kw
+        pr, ps, vr, vs, si, ni = sim(f, vt, **args)
+        print(f"{vt:10s} {name:32s} {f:3d} {pr:7.2f} {ps:7.2f} {pr/ps:5.1f} "
+              f"{vr:7.3f} {vs:7.3f} {vr/vs:4.1f} {si:8.2f} {ni:5.2f}")

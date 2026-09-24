@@ -41,55 +41,64 @@ A Kalman filter assumes each sample's error is independent of the last. GNSS pos
 
 ## 3. Simulation
 
-1D INS/GNSS, IMU prediction at 100 Hz, R set from the reported accuracies as EKF2 does. Truth: position error is Gauss-Markov with σ 1 m and τ 60 s, plus 0.2 m white (eph 1.02 m); velocity error is white, 0.1 m/s. 200 runs of 900 s, first 300 s discarded. "×" is the actual RMS error divided by the σ the filter reports. Innovation σ is the σ the position gate tests against; NIS is the mean normalized innovation squared against it, 1 when consistent.
+1D INS/GNSS, IMU prediction at 100 Hz with IMU noise at EKF2's assumed level, R set from the reported accuracies as EKF2 does. Truth: position error is Gauss-Markov with σ 1 m and τ 60 s, plus 0.2 m white (eph 1.02 m). Velocity error is either white 0.1 m/s, or correlated: Gauss-Markov 0.05 m/s with τ 20 s plus 0.05 m/s white (sacc 0.07 m/s). 200 runs of 900 s, first 300 s discarded. "×" is the actual RMS error divided by the σ the filter reports. Gate σ is the σ the position gate tests against; NIS is the mean normalized innovation squared against it, 1 when consistent.
 
-| Position model | Rate | Pos RMS | Pos σ | × | Vel RMS | Innov σ | NIS |
+**White velocity error:**
+
+| Filter | Rate | Pos RMS | Pos σ | × | Vel RMS | Gate σ | NIS |
 |---|---|---|---|---|---|---|---|
-| Today | 5 Hz | 0.91 m | 0.14 m | 6.4 | 0.039 m/s | 1.03 m | 0.18 |
-| Today | 10 Hz | 0.92 m | 0.10 m | 9.2 | 0.033 m/s | 1.02 m | 0.18 |
-| Today | 20 Hz | 0.92 m | 0.07 m | 12.9 | 0.028 m/s | 1.02 m | 0.18 |
-| R × rate/5 Hz | 10 Hz | 0.91 m | 0.12 m | 7.6 | 0.033 m/s | 1.45 m | 0.11 |
-| R × rate/5 Hz | 20 Hz | 0.86 m | 0.10 m | 8.5 | 0.028 m/s | 2.04 m | 0.07 |
-| R × 10 | 10 Hz | 0.83 m | 0.18 m | 4.6 | 0.033 m/s | 3.23 m | 0.04 |
-| R × 100 | 10 Hz | 0.63 m | 0.32 m | 2.0 | 0.033 m/s | 10.20 m | 0.01 |
-| R × τ/Δt | 5 Hz | 0.66 m | 0.60 m | 1.1 | 0.040 m/s | 17.67 m | 0.00 |
-| R × τ/Δt | 10 Hz | 0.57 m | 0.51 m | 1.1 | 0.033 m/s | 24.99 m | 0.00 |
-| R × τ/Δt, gate on eph² | 5 Hz | 0.66 m | 0.60 m | 1.1 | 0.039 m/s | 1.18 m | 0.68 |
-| R × τ/Δt, gate on eph² | 10 Hz | 0.61 m | 0.51 m | 1.2 | 0.033 m/s | 1.14 m | 0.75 |
-| Bias states, true τ and σ | 5 Hz | 0.63 m | 0.62 m | 1.0 | 0.039 m/s | 0.25 m | 1.00 |
-| Bias states, true τ and σ | 10 Hz | 0.55 m | 0.55 m | 1.0 | 0.033 m/s | 0.23 m | 1.00 |
-| Bias states, true τ and σ | 20 Hz | 0.46 m | 0.49 m | 0.9 | 0.028 m/s | 0.22 m | 1.00 |
-| Bias states, τ 20 s, σ 1.5 m | 10 Hz | 0.56 m | 0.54 m | 1.0 | 0.033 m/s | 0.29 m | 0.70 |
-| Bias states, τ 300 s, σ 0.7 m | 10 Hz | 0.60 m | 0.57 m | 1.1 | 0.034 m/s | 0.21 m | 1.36 |
+| Today | 5 Hz | 0.94 m | 0.14 m | 6.6 | 0.039 m/s | 1.03 m | 0.18 |
+| Today | 10 Hz | 0.92 m | 0.10 m | 9.1 | 0.033 m/s | 1.02 m | 0.18 |
+| Today | 20 Hz | 0.90 m | 0.07 m | 12.6 | 0.028 m/s | 1.02 m | 0.18 |
+| R × rate/5 Hz | 10 Hz | 0.88 m | 0.12 m | 7.3 | 0.033 m/s | 1.45 m | 0.12 |
+| R × 100 | 10 Hz | 0.64 m | 0.32 m | 2.0 | 0.033 m/s | 10.20 m | 0.01 |
+| Position R × τ/Δt | 10 Hz | 0.55 m | 0.51 m | 1.1 | 0.033 m/s | 24.99 m | 0.00 |
+| Position R × τ/Δt, gate on eph² | 10 Hz | 0.57 m | 0.51 m | 1.1 | 0.033 m/s | 1.14 m | 0.78 |
+| Position bias states | 10 Hz | 0.54 m | 0.55 m | 1.0 | 0.033 m/s | 0.23 m | 1.00 |
+| Position bias, τ 20 s, σ 1.5 m | 10 Hz | 0.54 m | 0.54 m | 1.0 | 0.033 m/s | 0.29 m | 0.70 |
+| Position bias, τ 300 s, σ 0.7 m | 10 Hz | 0.60 m | 0.57 m | 1.1 | 0.034 m/s | 0.21 m | 1.36 |
 
-- Velocity accuracy depends on the rate, not on the position model. The 1D model has no tilt or accelerometer-bias states, and its GNSS velocity error is white, which Groves says it isn't (τ up to 20 s).
-- Today's model is already about 6× overconfident at 5 Hz; each doubling of the rate adds √2. Its gate is too wide as well: real innovations are much smaller than predicted (NIS 0.18), so the default 5σ gate accepts a step of about 5 m, over 11× the actual innovation σ.
-- Groves' R = eph²·τ/Δt makes the covariance honest and matches the bias states' accuracy with no new states. On its own it makes the gate useless (25 m σ at 10 Hz). Testing innovations against today's P + eph² while fusing with the inflated R keeps a near-consistent gate (NIS 0.75) about as wide as today's.
-- Bias states make the covariance honest and the innovations consistent (NIS 1.0), so the same 5σ gate accepts about 1.2 m. A wrong τ or σ shows up in NIS (0.70 and 1.36), which gives a way to fit them from logs.
+**Correlated velocity error:**
+
+| Filter | Rate | Pos RMS | Pos σ | × | Vel RMS | Vel × | Gate σ | NIS |
+|---|---|---|---|---|---|---|---|---|
+| Today | 10 Hz | 1.03 m | 0.08 m | 12.2 | 0.054 m/s | 1.9 | 1.02 m | 0.52 |
+| Position R × τ/Δt, gate on eph² | 10 Hz | 3.62 m | 0.44 m | 8.3 | 0.055 m/s | 2.0 | 1.11 m | 11.19 |
+| Position and velocity R × τ/Δt, gate on eph² | 10 Hz | 1.21 m | 1.55 m | 0.8 | 0.083 m/s | 0.8 | 1.86 m | 0.30 |
+| Position bias states | 10 Hz | 3.58 m | 0.49 m | 7.3 | 0.054 m/s | 1.9 | 0.23 m | 1.02 |
+| Position and velocity bias states | 10 Hz | 0.95 m | 0.95 m | 1.0 | 0.045 m/s | 1.0 | 0.23 m | 1.00 |
+
+- Today's model is already about 6× overconfident at 5 Hz; each doubling of the rate adds √2. Its gate is too wide as well (NIS 0.18 with white velocity): the default 5σ gate accepts a step of about 5 m, over 11× the actual innovation σ.
+- Fixing position alone is only safe if velocity error is white. Both position-only fixes make the filter hold position on integrated velocity for minutes; with correlated velocity error that makes position 3.5× worse than today. Position-only bias states even show NIS ≈ 1 while 7× overconfident, so NIS can't catch the missing velocity model.
+- Groves' R × τ/Δt applied to both position and velocity makes both covariances honest (slightly pessimistic) with no new states. It costs accuracy: position 1.21 m against today's 1.03 m, velocity 0.083 m/s against 0.054 m/s. Gating on today's P + eph² keeps the position gate usable, though loose (NIS 0.30).
+- Position and velocity bias states are the only option better than today on every column: honest, consistent, and more accurate in both position and velocity.
 - Scaling R by rate relative to a fixed rate, or by a fixed factor, doesn't reach consistency. The factor has to be τ/Δt.
-- Position RMS below the raw wander (bias states and R × τ/Δt) comes from averaging GNSS over many τ while holding position on velocity. That relies on the error being zero-mean Gauss-Markov, so don't expect it in flight.
+- Position RMS below the raw wander (white velocity cases) comes from averaging GNSS over many τ while holding position on velocity. It relies on white velocity error and zero-mean Gauss-Markov position error, so don't expect it in flight.
+- The 1D model has no tilt or accelerometer-bias states, and its IMU noise equals the filter's assumed noise. A real IMU that is better than `EKF2_ACC_NOISE` makes inflating velocity R cheaper.
 
 ## 4. Options in EKF2
 
 ### R from τ, gate from eph
 
-Fuse GNSS position with R = max(eph, `EKF2_GPS_P_NOISE`)²·max(1, τ/Δt), and compute the innovation test ratio from P + max(eph, `EKF2_GPS_P_NOISE`)². One parameter (τ), no new states, a few lines in `gps_control.cpp`. This is the textbook loosely coupled answer (Groves §14.3.1) with the gate kept usable. R follows eph instantly, so an RTK Float → Fixed transition snaps as it does today.
+Fuse GNSS position with R = max(eph, `EKF2_GPS_P_NOISE`)²·max(1, τ_p/Δt) and GNSS velocity with R = max(sacc, `EKF2_GPS_V_NOISE`)²·max(1, τ_v/Δt). Compute the position test ratio from P + max(eph, `EKF2_GPS_P_NOISE`)². Two parameters, no new states, a few lines in `gps_control.cpp`. This is the textbook loosely coupled answer (Groves §14.3.1) with the gate kept usable. R follows eph instantly, so an RTK Float → Fixed transition snaps as it does today. It must scale both: position alone is worse than today when velocity error is correlated.
 
 ### Bias states
 
-- **State:** add `gnss_pos_bias = sf.V2()` (N, E) to `State` in `src/modules/ekf2/EKF/python/ekf_derivation/derivation.py`. SymForce regenerates `predict_covariance.h` and `state.h`. Dynamics b ← e^(−Δt/τ)·b with process noise σ_b²(1 − e^(−2Δt/τ)). Build it out behind a Kconfig option the way `EKF2_WIND` drops `wind_vel` (`--disable_wind`).
-- **Fusion:** GNSS position is a direct state update today (`fuseDirectStateMeasurement`). With a bias, H has a 1 on position and on the bias, so fusion moves to `measurementUpdate(K, H, R, innov)` (`ekf.h:288`), and R becomes the white part only.
-- **Scope:** only GNSS position fusion sees the bias. External vision, auxiliary global position, position resets and GNSS height don't.
-- **Not the existing `BiasEstimator`s.** The GNSS height, EV position and baro bias estimators are separate one-state random-walk filters that track a secondary sensor's offset from the EKF. They aren't coupled to the EKF covariance, and they go inactive when their sensor is the reference. Primary GNSS position has no bias model.
+Position and velocity bias states, north and east, four in all. Position alone is worse than today when velocity error is correlated.
 
-Over R from τ, bias states buy a consistent, tighter gate and NIS as a tuning signal, for two states per instance and the handling in §5.
+- **State:** add `gnss_pos_bias = sf.V2()` and `gnss_vel_bias = sf.V2()` to `State` in `src/modules/ekf2/EKF/python/ekf_derivation/derivation.py`. SymForce regenerates `predict_covariance.h` and `state.h`. Dynamics b ← e^(−Δt/τ)·b with process noise σ_b²(1 − e^(−2Δt/τ)). Build them out behind a Kconfig option the way `EKF2_WIND` drops `wind_vel` (`--disable_wind`).
+- **Fusion:** GNSS position and velocity are direct state updates today (`fuseDirectStateMeasurement`). With a bias, H has a 1 on the state and on its bias, so fusion moves to `measurementUpdate(K, H, R, innov)` (`ekf.h:288`), and R becomes the white part only.
+- **Scope:** only GNSS position and velocity fusion see the biases. External vision, auxiliary global position, position resets and GNSS height don't.
+- **Not the existing `BiasEstimator`s.** The GNSS height, EV position and baro bias estimators are separate one-state random-walk filters that track a secondary sensor's offset from the EKF. They aren't coupled to the EKF covariance, and they go inactive when their sensor is the reference. Primary GNSS has no bias model.
+
+Over R from τ, bias states buy accuracy, a consistent and tighter gate, and NIS as a tuning signal, for four states per instance and the handling in §5.
 
 ## 5. Open problems
 
-1. **Splitting eph.** A receiver reports one total σ. Bias states need a white R (a parameter, or a fraction of eph) and a bias variance of eph² − R. Keep the white part non-zero to avoid an ill-conditioned P.
-2. **Solution-type changes.** A new solution type is a new error process. On RTK Fixed ↔ Float ↔ 3D, reset the bias states to zero with the new σ_b², as on a receiver switch. Letting the old bias decay over τ would hold position off a newly fixed RTK solution for up to a minute.
-3. **τ and σ by solution type.** Standalone and SBAS wander by metres over tens of seconds to an hour; RTK Fixed by centimetres, where the model barely matters. Fit from static logs of F9P, X20 and mosaic receivers, sized to overbound.
-4. **Resets.** The bias belongs to one receiver. Reset the bias states and their covariance when `selection_count` changes. A blended output's bias shifts whenever the blend weights change, which neither option can represent, so selection should replace blending first.
-5. **Gate tightening.** A consistent gate with bias states is about 4× narrower in metres. A receiver that steps its position without raising eph in the same sample gets rejected where today it's accepted.
-6. **Height.** A vertical bias state would interact with `_gps_hgt_b_est`. Start with horizontal only.
-7. **Velocity.** GNSS velocity error is also correlated (Groves: up to 20 s), so the same overconfidence applies to velocity at higher rates, less severely.
+1. **τ_v is the key unknown.** Whether real GNSS velocity error is close to white decides whether position-only fixes are safe and how much velocity R scaling costs. Measure τ_p and τ_v from static logs of F9P, X20 and mosaic receivers before choosing defaults, sized to overbound.
+2. **Splitting eph and sacc.** A receiver reports one total σ each. Bias states need a white R (a parameter, or a fraction of the reported accuracy) and a bias variance of the rest. Keep the white part non-zero to avoid an ill-conditioned P.
+3. **Solution-type changes.** A new solution type is a new error process. On RTK Fixed ↔ Float ↔ 3D, reset the bias states to zero with the new variance, as on a receiver switch. Letting the old bias decay over τ would hold position off a newly fixed RTK solution for up to a minute.
+4. **Slow response to GNSS steps.** With τ-scaled R, a 2 m GNSS step without an eph change takes about 4 minutes to reach 63% at 10 Hz (today 10 s). Right when the step is error, slow when eph lags a real change.
+5. **Resets.** A bias belongs to one receiver. Reset the bias states and their covariance when `selection_count` changes. A blended output's error shifts whenever the blend weights change, which neither option can represent, so selection should replace blending first.
+6. **Gate tightening.** A consistent gate with bias states is about 4× narrower in metres. A receiver that steps its position without raising eph in the same sample gets rejected where today it's accepted.
+7. **Height.** A vertical bias state would interact with `_gps_hgt_b_est`. Start with horizontal only.
