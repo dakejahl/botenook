@@ -19,25 +19,28 @@ A Kalman filter assumes each sample's error is independent of the last. GNSS pos
 
 ## 2. Simulation
 
-1D INS/GNSS, IMU prediction at 100 Hz, R set from the reported accuracies as EKF2 does. Truth: position error is Gauss-Markov with σ 1 m and τ 60 s, plus 0.2 m white (eph 1.02 m); velocity error is white, 0.1 m/s. 200 runs of 900 s, first 300 s discarded. "×" is the actual RMS error divided by the σ the filter reports.
+1D INS/GNSS, IMU prediction at 100 Hz, R set from the reported accuracies as EKF2 does. Truth: position error is Gauss-Markov with σ 1 m and τ 60 s, plus 0.2 m white (eph 1.02 m); velocity error is white, 0.1 m/s. 200 runs of 900 s, first 300 s discarded. "×" is the actual RMS error divided by the σ the filter reports. Innovation σ is the predicted GNSS position innovation σ; NIS is the mean normalized innovation squared, 1 when the noise model is right.
 
-| Position model | Rate | Pos RMS | Pos σ | × | Vel RMS |
-|---|---|---|---|---|---|
-| Today | 5 Hz | 0.91 m | 0.14 m | 6.4 | 0.039 m/s |
-| Today | 10 Hz | 0.93 m | 0.10 m | 9.2 | 0.033 m/s |
-| Today | 20 Hz | 0.92 m | 0.07 m | 12.9 | 0.028 m/s |
-| R × rate/5 Hz | 10 Hz | 0.88 m | 0.12 m | 7.3 | 0.033 m/s |
-| R × rate/5 Hz | 20 Hz | 0.89 m | 0.10 m | 8.8 | 0.028 m/s |
-| Bias states, true τ and σ | 5 Hz | 0.63 m | 0.62 m | 1.0 | 0.039 m/s |
-| Bias states, true τ and σ | 10 Hz | 0.56 m | 0.55 m | 1.0 | 0.033 m/s |
-| Bias states, true τ and σ | 20 Hz | 0.47 m | 0.49 m | 1.0 | 0.028 m/s |
-| Bias states, τ 20 s, σ 1.5 m | 10 Hz | 0.54 m | 0.54 m | 1.0 | 0.033 m/s |
-| Bias states, τ 300 s, σ 0.7 m | 10 Hz | 0.60 m | 0.57 m | 1.1 | 0.034 m/s |
+| Position model | Rate | Pos RMS | Pos σ | × | Vel RMS | Innov σ | NIS |
+|---|---|---|---|---|---|---|---|
+| Today | 5 Hz | 0.91 m | 0.14 m | 6.4 | 0.039 m/s | 1.03 m | 0.18 |
+| Today | 10 Hz | 0.92 m | 0.10 m | 9.2 | 0.033 m/s | 1.02 m | 0.18 |
+| Today | 20 Hz | 0.92 m | 0.07 m | 12.9 | 0.028 m/s | 1.02 m | 0.18 |
+| R × rate/5 Hz | 10 Hz | 0.91 m | 0.12 m | 7.6 | 0.033 m/s | 1.45 m | 0.11 |
+| R × rate/5 Hz | 20 Hz | 0.86 m | 0.10 m | 8.5 | 0.028 m/s | 2.04 m | 0.07 |
+| R × 10 | 10 Hz | 0.83 m | 0.18 m | 4.6 | 0.033 m/s | 3.23 m | 0.04 |
+| R × 100 | 10 Hz | 0.63 m | 0.32 m | 2.0 | 0.033 m/s | 10.20 m | 0.01 |
+| Bias states, true τ and σ | 5 Hz | 0.62 m | 0.62 m | 1.0 | 0.039 m/s | 0.25 m | 1.00 |
+| Bias states, true τ and σ | 10 Hz | 0.53 m | 0.55 m | 1.0 | 0.033 m/s | 0.23 m | 1.00 |
+| Bias states, true τ and σ | 20 Hz | 0.47 m | 0.49 m | 1.0 | 0.028 m/s | 0.22 m | 1.00 |
+| Bias states, τ 20 s, σ 1.5 m | 10 Hz | 0.56 m | 0.54 m | 1.0 | 0.033 m/s | 0.29 m | 0.70 |
+| Bias states, τ 300 s, σ 0.7 m | 10 Hz | 0.63 m | 0.57 m | 1.1 | 0.034 m/s | 0.21 m | 1.36 |
 
 - Velocity accuracy depends on the rate, not on the position model. The 1D model has no tilt or accelerometer-bias states, so whether over-trusted position wander leaks into those is untested.
 - Today's model is already about 6× overconfident at 5 Hz; each doubling of the rate adds √2.
-- Scaling R by rate holds position trust at the 5 Hz level and keeps the velocity gain. It doesn't fix the overconfidence that is already there.
-- Bias states keep the reported σ honest at every rate and tolerate a 3× error in τ. Their position RMS below the raw wander comes from averaging GNSS over many τ while holding position on velocity. That relies on the error being zero-mean Gauss-Markov, so don't expect it in flight.
+- Today's position gate is too wide. Consecutive samples share their wander, so real innovations are much smaller than predicted (NIS 0.18): the default 5σ gate accepts a step of about 5 m, over 11× the actual innovation σ. Bias states make the innovations consistent (NIS 1.0) and the same 5σ gate accepts about 1.2 m.
+- Scaling R by rate holds position trust near the 5 Hz level and keeps the velocity gain, but widens the gate further. Inflating R can't reach consistency: R × 100 (about 10 m) is still 2× overconfident with a gate ten times wider.
+- Bias states keep the reported σ honest at every rate and tolerate a 3× error in τ. A wrong τ or σ shows up in NIS (0.70 and 1.36 above), which gives a way to fit them from logs. Their position RMS below the raw wander comes from averaging GNSS over many τ while holding position on velocity. That relies on the error being zero-mean Gauss-Markov, so don't expect it in flight.
 
 ## 3. Bias states in EKF2
 
@@ -52,4 +55,5 @@ A Kalman filter assumes each sample's error is independent of the last. GNSS pos
 2. **τ and σ by solution type.** Standalone and SBAS wander by metres over tens of seconds; RTK Fixed by centimetres, where the model barely matters; PPP converges slowly. Needs static logs from F9P, X20 and mosaic receivers to fit.
 3. **Resets.** The bias belongs to one receiver. Reset the bias states and their covariance when `selection_count` changes. A blended output's bias shifts whenever the blend weights change, which this model can't represent, so selection should replace blending first.
 4. **Height.** A vertical bias state would interact with `_gps_hgt_b_est`. Start with horizontal only.
-5. **Interim without new states:** scale position R by rate/f_ref in `gps_control.cpp`, and compute the innovation gate from the unscaled variance so the gate doesn't widen.
+5. **Gate tightening.** A consistent gate is about 4× narrower in metres. A receiver that steps its position without raising eph in the same sample gets rejected where today it's accepted.
+6. **Interim without new states:** scale position R by rate/f_ref in `gps_control.cpp`, and compute the innovation gate from the unscaled variance so the gate doesn't widen.
