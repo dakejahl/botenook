@@ -51,6 +51,8 @@ sensor_gnss_relative   → VehicleGPSPosition → vehicle_gnss_heading → EKF y
                          (fallback: sensor_gps.heading for drivers without relative topic)
 ```
 
+The baseline rotation is applied once, in `VehicleGPSPosition` from `SENS_GPSn_ROT`. Drivers report the measured baseline heading; `vehicle_gnss_heading.heading_offset` carries the baseline yaw for EKF2's observation model.
+
 Implications for selection/fusion ideas below:
 
 - Choosing **moving base** as position primary must **not** be required to get heading.

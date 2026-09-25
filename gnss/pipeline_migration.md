@@ -82,7 +82,7 @@ Driver `GPS_*` params stay. The unit-free field names come from [#24399 Update S
 ## 3. Order
 
 0. **Merged:** relaxed in-flight checks and strict re-arming on the ground (§1).
-1. **Heading on its own topic**: [#27102 refactor(ekf2): separate GNSS heading from position into independent topic](https://github.com/PX4/PX4-Autopilot/pull/27102), merging as-is.
+1. **Heading on its own topic**: [#27102 refactor(ekf2): separate GNSS heading from position into independent topic](https://github.com/PX4/PX4-Autopilot/pull/27102). The baseline rotation moves to the per-receiver `SENS_GPSn_ROT` (`GPS_YAW_OFFSET`, `SEP_YAW_OFFS` and `EKF2_GPS_YAW_OFF` migrate to `SENS_GPSn_YAW`), drivers report the measured baseline and `sensor_gps.heading_offset` is deleted, and the heading path builds only with a consumer (`SENSORS_VEHICLE_GNSS_HEADING`). Driver side merged as [PX4/PX4-GPSDrivers#240 fix(ubx): real UTC time and no fake sample timestamp on NAV-RELPOSNED/DAHEADING](https://github.com/PX4/PX4-GPSDrivers/pull/240) and [PX4/PX4-GPSDrivers#241 refactor(gps): drop heading_offset, report the raw baseline heading](https://github.com/PX4/PX4-GPSDrivers/pull/241).
 2. **Rename, and `VehicleGnss` as the hub output.** `SensorGnss`/`sensor_gnss` and `VehicleGnss`/`vehicle_gnss` with `receiver`, `antenna_offset` and the selection fields; `SENS_GNSS*` params; module, selector, logger, replay and ROS 2 topic names. Every consumer moves once. Flight Review, pyulog-based tools and PlotJuggler layouts learn both names. No behavior change: until step 4 the output can still be the blend (`SELECTION_BLENDED`). The one exception is the DroneCAN speed accuracy fix (§2, Renames). Can be two PRs (message rename, then hub output) in one release, so logs change layout once.
 3. **`GnssChecks` → `src/lib/gnss`**, self-contained: own params struct, `run(sample, armed, in_air, at_rest)`, `GNSS_CHECK`/`GNSS_REQ_*` params. `EKF2_VEL_LIM` moves out of it into EKF2. EKF2 uses it from the lib with no behavior change. Independent of step 2.
 4. **Selection replaces blending.** One `GnssChecks` per receiver in the hub, `SensorGnssSelector` state machine, `sensors_status_gnss`, live `selection_count`, EKF2 reset on a switch, `GPS_RAW_INT` follows the selected receiver, commander's `gnssRedundancyCheck` reads `sensors_status_gnss`. Same release: `SENS_GPS_MASK` default 0 with a warn-once, the ARK RTK pages and `tuning_the_ecl_ekf.md`.
@@ -218,8 +218,7 @@ uint32 SYSTEM_ERROR_EVENT_CONGESTION     = 16
 uint32 SYSTEM_ERROR_CPU_OVERLOAD         = 32
 uint32 SYSTEM_ERROR_OUTPUT_CONGESTION    = 64
 
-float32 heading          # [rad] [@range -PI, PI] [@invalid NaN] Dual-antenna heading, for receivers without sensor_gnss_relative. Use vehicle_gnss_heading
-float32 heading_offset   # [rad] [@range -PI, PI] [@invalid NaN] Offset already applied by the receiver; NaN when the sensors module applies SENS_GNSSn_ROT
+float32 heading          # [rad] [@range -PI, PI] [@invalid NaN] Measured dual-antenna baseline heading, for receivers without sensor_gnss_relative. Use vehicle_gnss_heading, rotated by SENS_GNSSn_ROT
 float32 heading_accuracy # [rad] Heading accuracy
 
 float32 rtcm_injection_rate  # [Hz] Correction injection rate
