@@ -315,7 +315,7 @@ Plus:
 
 1. **Case B default:** always MB (rate-first), or rover until rate collapses? Data point: Aviant runs MB-primary with a reconfigured-rover fallback in production (#25516), and the ~900 ms degraded-rover staleness makes “rover until rate collapses” look unsalvageable — by the time rate collapses, the data is already outside the EKF horizon.
 2. **Layer-2 redundancy:** once sticky selection works, is either multi-EKF-per-receiver (`EKF2_MULTI_GPS`) or in-filter multi-GNSS aiding worth its cost? Needs the correlated-error model and instance-count sizing (§6.5). Explicitly *not* a blocker for blending removal.
-3. **Deprecation mechanics:** flip the `SENS_GPS_MASK` default and warn in the same release as the selector, or hold one release? Anything owed to intentional blending users beyond a release-notes migration note?
+3. **Deprecation mechanics:** flip the `SENS_GPS_MASK` default and warn in the same release as the selector, or hold one release? Anything owed to intentional blending users beyond a release-notes migration note? *Decided 2026-09-29: blending is removed outright before the checks move, with no deprecation release, since the whole pipeline lands in one release ([pipeline_migration.md](pipeline_migration.md) §3).*
 4. **Default params:** stay Manual + prime 0 for zero surprise, or product/airframe defaults for dual-RTK boards?
 5. **Role publication:** worth a `sensor_gps` role field early, or heuristics first?
 6. **Switch cost:** quantify position step on instance swap in real dual-F9P / dual-CAN logs before designing promote timers (also feeds the Layer-2 go/no-go).

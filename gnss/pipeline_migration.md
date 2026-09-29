@@ -47,7 +47,7 @@ MAVLink                GPS_RAW_INT = preferred receiver, GPS2_RAW = the other on
 7. **Thresholds belong to the hub**: `GNSS_CHECK` and `GNSS_REQ_*`. EKF2 reads `GNSS_REQ_SACC` for yaw-estimator gating in `gps_control.cpp`.
 8. `estimator_gps_status` is deleted. `estimator_status.gps_check_fail_flags` is filled from `vehicle_gnss.failed_checks` until commander and HIGH_LATENCY2 read the new topics, then removed.
 9. **`GPS_RAW_INT` and `GPS2_RAW` stay on fixed receivers for the session**: the preferred receiver (instance 0 with `SENS_GNSS_PRIME = -1`) and the other one. Commander reports a switch as an event. Per-receiver GNSS messages wait for [mavlink/mavlink#2146 development.xml: add GNSS message](https://github.com/mavlink/mavlink/pull/2146).
-10. **Consumers that care check `usable`** instead of their own fix-type tests. HomePosition must; geofence, RemoteID, open_drone_id and the calibrations are reviewed one by one in step 5.
+10. **Consumers that care check `usable`** instead of their own fix-type tests. HomePosition must; geofence, RemoteID, open_drone_id and the calibrations are reviewed one by one in step 6.
 11. **EKF2 keeps its own state, not the checker's.** The restart hold-off after a GNSS stop, today `_gnss_checks.reset()`, becomes a per-instance timer on `usable`; `resetHard()` on an EKF reset goes; the "quality poor" timeout tracks the last usable sample. `vehicle_gnss_heading` is published only from a receiver that passes its own heading checks (decision 12), so heading is no longer gated by the position receiver.
 12. **Heading has its own gate, not the position checks.** GNSS yaw starts on the heading sample itself: σ under the yaw-reset threshold ([#28846](https://github.com/PX4/PX4-Autopilot/pull/28846)), fresh data, tilt alignment, and no spoofing or jamming reported by the heading receiver. EPH, EPV, PDOP, drift and speed don't gate it, and stopping position/velocity fusion doesn't stop yaw. The hold-off after a yaw fault, today the `GnssChecks` reset in `stopGnssFusion()`, becomes a yaw timer. Measured on an ARK G5 P3H outdoors (2026-09-26): heading σ under 2° from 36 s after power-up, yet yaw fused only from 104 s in one run and 128 s in the next, held back by EPV while Galileo HAS converged (epv 117 m at first fix, under `EKF2_REQ_EPV` 5 m at 115 s). Lifting the airframe failed PDOP for 0.45 s, and `stopGnssFusion()` then stopped yaw for 10 s with yaw innovations under 5.4°.
 
@@ -84,23 +84,23 @@ Driver `GPS_*` params stay. The unit-free field names come from [#24399 Update S
 ## 3. Order
 
 0. **Merged:** relaxed in-flight checks and strict re-arming on the ground (§1).
-1. **Heading on its own topic**: [#27102 refactor(ekf2): separate GNSS heading from position into independent topic](https://github.com/PX4/PX4-Autopilot/pull/27102). The baseline rotation moves to the per-receiver `SENS_GPSn_ROT` (`GPS_YAW_OFFSET`, `SEP_YAW_OFFS` and `EKF2_GPS_YAW_OFF` migrate to `SENS_GPSn_YAW`), drivers report the measured baseline and `sensor_gps.heading_offset` is deleted, and the heading path builds only with a consumer (`SENSORS_VEHICLE_GNSS_HEADING`). GNSS yaw also gets its own start and stop gate (decision 12): the PR already drops `_gps_intermittent` from the yaw start conditions, and `_gnss_checks.passed()` there and `stopGnssYawFusion()` in `stopGnssFusion()` are the remaining places where position quality holds heading back. Driver side merged as [PX4/PX4-GPSDrivers#240 fix(ubx): real UTC time and no fake sample timestamp on NAV-RELPOSNED/DAHEADING](https://github.com/PX4/PX4-GPSDrivers/pull/240) and [PX4/PX4-GPSDrivers#241 refactor(gps): drop heading_offset, report the raw baseline heading](https://github.com/PX4/PX4-GPSDrivers/pull/241). `SENS_GPS_MASK` defaults to 0 right after it, with a warn-once, since blending no longer keeps heading available.
-2. **Rename, and `VehicleGnss` as the hub output.** `SensorGnss`/`sensor_gnss` and `VehicleGnss`/`vehicle_gnss` with `receiver`, `antenna_offset` and the selection fields; `SENS_GNSS*` params; module, selector, logger, replay and ROS 2 topic names. Every consumer moves once. Flight Review, pyulog-based tools and PlotJuggler layouts learn both names. No behavior change: until step 4 the output can still be the blend (`SELECTION_BLENDED`). The one exception is the DroneCAN speed accuracy fix (§2, Renames). Can be two PRs (message rename, then hub output) in one release, so logs change layout once.
-3. **`GnssChecks` → `src/lib/gnss`, one per receiver in the hub**: own params struct, `run(sample, armed, in_air, at_rest)`, `GNSS_CHECK`/`GNSS_REQ_*` params, `sensors_status_gnss`. `EKF2_VEL_LIM` moves out of it into EKF2. Diagnostics only: EKF2 still runs its own checks, so no behavior change. Independent of step 2. Proposed to ThomasRigi and Matheo-13 on [#28520 feat(sensors): Move gnss checks to vehicle_gps_position file](https://github.com/PX4/PX4-Autopilot/pull/28520).
-4. **Selection replaces blending**, on step 3's per-receiver `usable`: `SensorGnssSelector` state machine, live `selection_count`, EKF2 reset on a switch, commander's `gnssRedundancyCheck` reads `sensors_status_gnss`. a-bernasconi on [#28798 feat(sensors/gps): Improve GPS selection](https://github.com/PX4/PX4-Autopilot/pull/28798).
-5. **Check result on the sample.** `usable` and `failed_checks` on `vehicle_gnss`; EKF2 drops `GnssChecks` and publishes `gnss_fusion_state`; commander's pre-arm and in-flight GNSS messages move to `vehicle_gnss` and `sensors_status_gnss`; consumers gate on `usable`; `estimator_gps_status` is deleted.
-6. **Delete blending** (`GpsBlending`, `SENS_GPS_MASK`, `SENS_GPS_TAU`) one release after step 4.
+1. **Heading on its own topic**: [#27102 refactor(ekf2): separate GNSS heading from position into independent topic](https://github.com/PX4/PX4-Autopilot/pull/27102). The baseline rotation moves to the per-receiver `SENS_GPSn_ROT` (`GPS_YAW_OFFSET`, `SEP_YAW_OFFS` and `EKF2_GPS_YAW_OFF` migrate to `SENS_GPSn_YAW`), drivers report the measured baseline and `sensor_gps.heading_offset` is deleted, and the heading path builds only with a consumer (`SENSORS_VEHICLE_GNSS_HEADING`). GNSS yaw also gets its own start and stop gate (decision 12): the PR already drops `_gps_intermittent` from the yaw start conditions, and `_gnss_checks.passed()` there and `stopGnssYawFusion()` in `stopGnssFusion()` are the remaining places where position quality holds heading back. Driver side merged as [PX4/PX4-GPSDrivers#240 fix(ubx): real UTC time and no fake sample timestamp on NAV-RELPOSNED/DAHEADING](https://github.com/PX4/PX4-GPSDrivers/pull/240) and [PX4/PX4-GPSDrivers#241 refactor(gps): drop heading_offset, report the raw baseline heading](https://github.com/PX4/PX4-GPSDrivers/pull/241). Merged 2026-09-28; after it blending no longer keeps heading available.
+2. **Rename, and `VehicleGnss` as the hub output.** `SensorGnss`/`sensor_gnss` and `VehicleGnss`/`vehicle_gnss` with `receiver`, `antenna_offset` and the selection fields; `SENS_GNSS*` params; module, selector, logger, replay and ROS 2 topic names. Every consumer moves once. Flight Review, pyulog-based tools and PlotJuggler layouts learn both names. Merged 2026-09-29 as [#24399 refactor(msg): rename GPS to GNSS in messages, topics and sensor parameters](https://github.com/PX4/PX4-Autopilot/pull/24399). No behavior change. The one exception is the DroneCAN speed accuracy fix (§2, Renames). Can be two PRs (message rename, then hub output) in one release, so logs change layout once.
+3. **Delete blending**: the blend path of `GpsBlending`, `SENS_GNSS_MASK` and `SENS_GNSS_TAU`. The hub outputs one receiver, chosen by the selection it already had with blending off (the `SENS_GNSS_PRIME` receiver while it has a 3D fix, otherwise the best fix, then the most satellites) until step 5 replaces it. [#28921 refactor(sensors): remove GNSS blending](https://github.com/PX4/PX4-Autopilot/pull/28921).
+4. **Checks per receiver, result on the sample**: `GnssChecks` → `src/lib/gnss` with its own params struct and `run(sample, armed, in_air, at_rest)`, one per receiver in the hub, `GNSS_CHECK`/`GNSS_REQ_*` params. `usable` and `failed_checks` on `vehicle_gnss` from the selected receiver's checker; EKF2 fuses only usable samples and drops `GnssChecks`; `sensors_status_gnss` carries every receiver's diagnostics and commander's `gnssRedundancyCheck` reads it; `estimator_gps_status` is deleted and `estimator_status.gps_check_fail_flags` is filled from `vehicle_gnss.failed_checks`. Lands after [#28663 fix(ekf2): reject GNSS samples with vel above EKF2_VEL_LIM in EKF instead of in the on ground GNSS checks](https://github.com/PX4/PX4-Autopilot/pull/28663) moves `EKF2_VEL_LIM` into EKF2's GNSS control logic. Matheo-13 and ThomasRigi on [#28520 feat(sensors): Move gnss checks to vehicle_gps_position file](https://github.com/PX4/PX4-Autopilot/pull/28520), restructured to this scope.
+5. **Selection**: `SensorGnssSelector` state machine on step 4's per-receiver `usable`, replacing the step-3 selection; live `selection_count`, EKF2 reset on a switch. a-bernasconi on [#28798 feat(sensors/gps): Improve GPS selection](https://github.com/PX4/PX4-Autopilot/pull/28798).
+6. **Reporting**: EKF2 publishes `gnss_fusion_state`; commander's pre-arm and in-flight GNSS messages move to `vehicle_gnss` and `sensors_status_gnss`; consumers gate on `usable`; `estimator_status.gps_check_fail_flags` goes once commander and HIGH_LATENCY2 read the new topics.
 7. **Docs**, one dedicated pass after step 6: `tuning_the_ecl_ekf.md`, the GNSS and RTK setup pages and the ARK RTK pages describe the final pipeline (selection, where the checks run, their parameters, loss reporting). Until then each step only updates the docs references it renames.
 
 Why this order:
 
-- **Rename right after the heading split.** The heading split is the only in-flight change that survives, so every later step is written once against final names, and consumers, ROS 2 users and log tools migrate once. The step-5 fields are additions to `VehicleGnss`.
-- **`GnssChecks` as a lib before the selector.** The selector needs a check per receiver; the lib gives it one without the hub depending on EKF2.
-- **Selector before the check result on the sample.** No check result is ever computed for a blend, and after step 4 EKF2 still checks the same receiver with the same thresholds, so step 5 can be compared against it.
-- **Heading split before the selector.** Blending is what keeps CAN moving-base heading working: [#19796 Always publish GPS heading in vehicle_gps_position if available](https://github.com/PX4/PX4-Autopilot/pull/19796) was closed and [#19907 Enable GPS Blending by default](https://github.com/PX4/PX4-Autopilot/pull/19907) turned blending on instead.
-- **Loss reporting (§4) depends on nothing** if it stays in commander on `estimator_status.gps_check_fail_flags` now and switches to `gnss_fusion_state` and the new topics in step 5.
+- **Rename right after the heading split.** The heading split is the only in-flight change that survives, so every later step is written once against final names, and consumers, ROS 2 users and log tools migrate once. The step-4 fields are additions to `VehicleGnss`.
+- **Blending out before the checks move.** With one receiver on `vehicle_gnss`, the check result on a sample is always that receiver's, no check result is computed for a blend, and step 4 doesn't wait for selection. All steps land in one release, so no release ships the step-3 selection and blending gets no deprecation release.
+- **Checks before the selector.** The selector needs a check per receiver; step 4 gives it one without the hub depending on EKF2.
+- **Heading split before blending goes.** Blending is what keeps CAN moving-base heading working: [#19796 Always publish GPS heading in vehicle_gps_position if available](https://github.com/PX4/PX4-Autopilot/pull/19796) was closed and [#19907 Enable GPS Blending by default](https://github.com/PX4/PX4-Autopilot/pull/19907) turned blending on instead.
+- **Loss reporting (§4) depends on nothing** if it stays in commander on `estimator_status.gps_check_fail_flags` now and switches to `gnss_fusion_state` and the new topics in step 6.
 
-Carried over from open PRs: EKF2 not resetting checks when fusion stops ([#28610 feat(ekf2)!: remove gnss_checks reset inside gps_control.cpp](https://github.com/PX4/PX4-Autopilot/pull/28610)) falls out of step 5, and `EKF2_VEL_LIM` as an EKF-side sample limit ([#28663 fix(ekf2): reject GNSS samples with vel above EKF2_VEL_LIM in EKF instead of in the on ground GNSS checks](https://github.com/PX4/PX4-Autopilot/pull/28663)) is part of step 3.
+Carried over from open PRs: EKF2 no longer resets the checks when fusion stops since [#28610 refactor(ekf2): stop resetting the GNSS checks when GNSS fusion stops](https://github.com/PX4/PX4-Autopilot/pull/28610) (merged 2026-09-29, a restart hold-off timer in EKF2), and `EKF2_VEL_LIM` as an EKF-side sample limit ([#28663 fix(ekf2): reject GNSS samples with vel above EKF2_VEL_LIM in EKF instead of in the on ground GNSS checks](https://github.com/PX4/PX4-Autopilot/pull/28663)) lands before step 4.
 
 ## 4. Loss reporting
 
@@ -123,7 +123,7 @@ What is left is the reporting: the failsafe gave no reason, and the one GNSS eve
 - Trigger on local position going invalid, the failsafe the user sees. `cs_gps` falling lags it by `reset_timeout_max − EKF2_NOAID_TOUT`, 2 s with defaults.
 - Reason precedence: GNSS data timeout; quality checks (the failing flag); innovation rejection (`cs_gnss_fault`, aid-source `innovation_rejected`); otherwise generic.
 - One event, the same text in the log, and suppress the cascade that follows it.
-- Until step 5, commander infers the reason from `gps_check_fail_flags` and the fault flags. From step 5, `gnss_fusion_state` gives it directly and `sensors_status_gnss` names the receiver.
+- Until step 6, commander infers the reason from `gps_check_fail_flags` and the fault flags. From step 6, `gnss_fusion_state` gives it directly and `sensors_status_gnss` names the receiver.
 - SITL: [#28398 fix(gz_bridge): support GPS failure injection](https://github.com/PX4/PX4-Autopilot/pull/28398) injects `off`, `stuck` and `wrong`. A check-failure reason on main needs fix loss or a new accuracy-degradation mode, since eph must exceed 50 m or sacc 10 m/s.
 
 ## 5. Deferred follow-ups
@@ -243,7 +243,7 @@ uint8 CORRECTIONS_MSG_USED_USED     = 2
 
 ### `VehicleGnss.msg` (new)
 
-The check-result block arrives in step 5; everything above it lands in step 2.
+The check-result block arrives in step 4; everything above it lands in step 2.
 
 ```text
 # Selected GNSS solution
@@ -259,16 +259,15 @@ SensorGnss receiver # The selected receiver's sensor_gnss sample, unmodified
 
 float32[3] antenna_offset # [m] [@frame FRD] Antenna position of the selected receiver (SENS_GNSSn_OFFX/Y/Z)
 
-uint8 selected_instance       # [-] [@invalid 255 while blended] sensor_gnss instance of the selected receiver
+uint8 selected_instance       # [-] sensor_gnss instance of the selected receiver
 uint8 selection_count         # [-] Increments when the selected receiver changes; EKF2 resets position on a change
 uint8 selection_reason        # [@enum SELECTION] Why this receiver is selected
 uint8 SELECTION_PREFERRED = 0 # The SENS_GNSS_PRIME receiver
 uint8 SELECTION_FAILOVER  = 1 # The preferred receiver is unusable or timed out
 uint8 SELECTION_RANKED    = 2 # SENS_GNSS_PRIME = -1
 uint8 SELECTION_ONLY      = 3 # The only receiver present
-uint8 SELECTION_BLENDED   = 4 # Blended output, receiver.device_id = 0. Removed with blending
 
-# Check result for this sample (step 5)
+# Check result for this sample (step 4)
 bool usable                 # Passes the checks enabled in GNSS_CHECK, and has for long enough (GNSS_REQ_TIME)
 uint16 failed_checks        # [@enum CHECK] Failed checks among those enabled in GNSS_CHECK, in GNSS_CHECK bit order
 uint16 CHECK_NSATS   = 1    # Satellites below GNSS_REQ_NSATS
@@ -328,4 +327,4 @@ float32[4] speed_horizontal_filtered # [m/s] Filtered horizontal speed at rest
 
 ### Removed
 
-`EstimatorGpsStatus.msg` in step 5. `EstimatorStatus.gps_check_fail_flags` and its `GPS_CHECK_FAIL_*` constants once commander and HIGH_LATENCY2 read `vehicle_gnss` and `sensors_status_gnss`.
+`EstimatorGpsStatus.msg` in step 4. `EstimatorStatus.gps_check_fail_flags` and its `GPS_CHECK_FAIL_*` constants once commander and HIGH_LATENCY2 read `vehicle_gnss` and `sensors_status_gnss`.
