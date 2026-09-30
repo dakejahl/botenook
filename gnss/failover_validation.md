@@ -17,7 +17,7 @@ For one failure of the selected receiver, armed, in the air, in a position-contr
 
 | Piece | State on main (`d5223850dd`) |
 |---|---|
-| Failure injection | `failure_injection_manager` takes `MAV_CMD_INJECT_FAILURE` (shell: `failure gps <type> -i <n>`, 1-based, 0 = all) and publishes `failure_injection`. Applied per receiver as the last step before `sensor_gnss` is published in `gps`, `septentrio`, the DroneCAN GNSS bridge (`gnss.cpp:575`), `sensor_gps_sim` and gz_bridge, so everything downstream (hub checks, timeout, selection, EKF2, commander, MAVLink streams) sees exactly what a real failure would produce for those fields. Not covered: driver-internal reactions (serial restart after data loss, DroneCAN NodeStatus), ramps, and `sensor_gnss_relative` (heading). Needs `SYS_FAILURE_EN` (reboot). |
+| Failure injection | `failure_injection_manager` takes `MAV_CMD_INJECT_FAILURE` (shell: `failure gps <type> -i <n>`, 1-based, 0 = all) and publishes `failure_injection`. Applied per receiver as the last step before `sensor_gnss` is published in `gps`, `septentrio`, the DroneCAN GNSS bridge (`gnss.cpp:575`), `sensor_gps_sim` and gz_bridge, so everything downstream (hub checks, timeout, selection, EKF2, commander, MAVLink streams) sees exactly what a real failure would produce for those fields. Not covered: driver-internal reactions (serial restart after data loss, DroneCAN NodeStatus), ramps, and `sensor_gnss_relative` (heading, gap 7). Needs `SYS_FAILURE_EN` (reboot). |
 | GNSS failure types | `off`: nothing published. `stuck`: last good sample replayed with fresh timestamps. `wrong`: fix type from `SYS_FAIL_GPS_WRG`, jamming state from `SYS_FAIL_GPS_JAM`, position untouched. The other MAVLink types do nothing. |
 | RC trigger | `SYS_FAIL_RC_SRC/UNIT/MODE/INST`: an aux switch injects while it is held on. |
 | Second SIH receiver | `sensor_gps_sim` publishes instance 1 when `SENS_GNSS1_OFFX` or `_OFFY` is non-zero: instance 0's sample shifted by that lever arm, with its own `device_id`. |
@@ -32,6 +32,8 @@ For one failure of the selected receiver, armed, in the air, in a position-contr
 4. **An injected failure is latched.** It holds until `ok` arrives; if the companion or its link dies, the receiver stays failed for the rest of the flight. Accepted for the flight test: the standby carries the vehicle and the pilot lands.
 5. **MAVLink does not carry the selected receiver.** `GPS_RAW_INT` and `GPS2_RAW` are fixed receivers. Tests assert vehicle behaviour over MAVLink and the selection and resets from the log.
 6. **SIH runs one EKF2 instance.** Multi-EKF is out of scope for this validation (few users).
+7. **Heading ignores injection.** `sensor_gnss_relative` has no `process_gnss`, so `off` on a receiver leaves the moving-base heading alive, while a real base failure takes the rover's heading with it. Required (Jake, 2026-09-30): `off` on the moving base must stop the heading. Two parts: the `sensor_gnss_relative` publishers (`gps`, `septentrio`, DroneCAN `gnss_relative.cpp`) apply the generic `process()` on the rover's instance, and the hub drops a moving-base heading sample while the receiver in the base slot (`SENS_GNSSn_HDG = 1`, the other slot) is silent, injected or real. The hub part is real behaviour, not injection: a rover can't hold a moving-base heading without the base, and it mirrors the receiver's own corrections timeout.
+8. **SIH has no heading.** `sensor_gps_sim` publishes no `sensor_gnss_relative`; the moving-base cases need a simulated relative heading for the rover instance from ground-truth yaw, with instance 0 as its base.
 
 ## 4. SIH cases
 
@@ -51,8 +53,10 @@ Two receivers, `SENS_GNSS_PRIME = 0`, S the selected receiver, B the standby, B 
 | 10 | S accuracy above the relaxed gate (gap 2) | check failure on eph/sacc | §1 |
 | 11 | `SENS_GNSS_PRIME = -1`, disarmed, B more accurate by more than the ratio (gap 2) | ranking on accuracy | selection moves to B after the hold |
 | 12 | `SENS_GNSS_PRIME = -1`, disarmed, S `slow` (gap 2) | ranking on update rate | selection moves to B after the hold |
+| 13 | S is the moving base of B's heading (`SENS_GNSS1_HDG = 1`), GNSS yaw fused, S `off` | position failover plus heading loss | §1 for position; yaw fusion stops without a yaw reset, EKF2 continues on the mag |
+| 14 | 13, then S `ok` | heading recovery | GNSS yaw resumes on the heading gate (#28846), no position switch back while armed |
 
-Cases 1–9 need gap 1 only; case 10 and the ranked-selection cases on eph/epv and rate need gap 2.
+Cases 1–9 need gap 1 only; case 10 and the ranked-selection cases on eph/epv and rate need gap 2; cases 13–14 need gaps 7 and 8.
 
 ## 5. Flight-test tool
 
@@ -70,7 +74,7 @@ The flight vehicle carries two DroneCAN receivers, so the injection is applied i
 1. After step 6 merges: sim gap 1 and injection gap 2, then the cases in CI.
 2. The tool against SIH; the log report passes.
 3. After step 9, once everything has landed. Bench, props off, outdoors with a fix on both receivers: each injection from the companion, log report.
-4. Flight, Position mode, pilot ready to take Altitude or Stabilized: S `off` in hover, S `wrong` in hover, S `off` in slow forward flight, S `off` on a mission leg.
+4. Flight, Position mode, pilot ready to take Altitude or Stabilized: S `off` in hover, S `wrong` in hover, S `off` in slow forward flight, S `off` on a mission leg. The vehicle is rover + moving base with the base preferred, so every S `off` is also case 13: position fails over to the rover and GNSS yaw hands over to the mag.
 
 ## 7. Open
 
