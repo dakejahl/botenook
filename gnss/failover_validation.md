@@ -27,11 +27,11 @@ For one failure of the selected receiver, armed, in the air, in a position-contr
 ## 3. Gaps
 
 1. **The second SIH receiver can't produce a reset delta.** It is a copy of instance 0 with the lever arm added, so after the lever-arm correction the receivers agree exactly and share one noise sequence. Needed: an explicit enable, independent noise, and a per-receiver position and height bias.
-2. **No injection reaches the accuracy checks or the position.** In flight a receiver is unusable on fix < 3D, eph or epv > 50 m, sacc > 10 m/s, spoofing or jamming; only fix and jamming can be injected. Needed: an accuracy mode (eph, epv, sacc) and a position-error mode (`FAILURE_TYPE_DRIFT` is unused for GNSS). Spoofing has no knob.
+2. **No injection reaches the accuracy checks, the satellite count or the update rate.** In flight a receiver is unusable on fix < 3D, eph or epv > 50 m, sacc > 10 m/s, spoofing or jamming, and the ranked selection compares eph/epv and update interval; only fix and jamming can be injected. Planned, in `process_gnss` so every driver gets it: `wrong` also overrides eph, epv, speed accuracy, satellite count and spoofing state from new `SYS_FAIL_GPS_*` parameters (0 = unchanged, and `SYS_FAIL_GPS_WRG` gets an Unchanged value), and `slow` publishes one sample in N. Position error is out of scope.
 3. **No hardware build has the manager.** `CONFIG_MODULES_FAILURE_INJECTION_MANAGER` is set only in `px4_sitl`. The flight test uses a local build for the test airframe's board; upstream board configs don't change.
 4. **An injected failure is latched.** It holds until `ok` arrives; if the companion or its link dies, the receiver stays failed for the rest of the flight. Accepted for the flight test: the standby carries the vehicle and the pilot lands.
 5. **MAVLink does not carry the selected receiver.** `GPS_RAW_INT` and `GPS2_RAW` are fixed receivers. Tests assert vehicle behaviour over MAVLink and the selection and resets from the log.
-6. **SIH runs one EKF2 instance.** The reset across several instances is first exercised on hardware unless a multi-IMU SIH case is added.
+6. **SIH runs one EKF2 instance.** Multi-EKF is out of scope for this validation (few users).
 
 ## 4. SIH cases
 
@@ -49,12 +49,14 @@ Two receivers, `SENS_GNSS_PRIME = 0`, S the selected receiver, B the standby, B 
 | 8 | S toggled `off`/`ok` at 1 Hz | hysteresis | one switch, one reset |
 | 9 | 1 with `SENS_GNSS_PRIME = -1` | ranked selection | §1 |
 | 10 | S accuracy above the relaxed gate (gap 2) | check failure on eph/sacc | §1 |
+| 11 | `SENS_GNSS_PRIME = -1`, disarmed, B more accurate by more than the ratio (gap 2) | ranking on accuracy | selection moves to B after the hold |
+| 12 | `SENS_GNSS_PRIME = -1`, disarmed, S `slow` (gap 2) | ranking on update rate | selection moves to B after the hold |
 
-Cases 1–9 need gap 1 only.
+Cases 1–9 need gap 1 only; case 10 and the ranked-selection cases on eph/epv and rate need gap 2.
 
 ## 5. Flight-test tool
 
-pymavlink scripts in `Tools/` upstream, landing with the SIH tests and described in `docs/en/debug/failure_injection.md`. Run unchanged against SIH and the vehicle.
+The shared interface is the firmware side: `failure_injection_manager` on the FC takes `MAV_CMD_INJECT_FAILURE` and the `SYS_FAIL_*` payload parameters from any MAVLink client (MAVSDK tests in CI, the `failure` shell command, the RC trigger, a companion). Nothing else is shared. The companion client is pymavlink scripts in `Tools/` upstream, landing with the SIH tests and described in `docs/en/debug/failure_injection.md`. Run unchanged against SIH and the vehicle.
 
 - **Inject**: `MAV_CMD_INJECT_FAILURE` for unit GPS with a type, an instance and a duration, then `ok`. `ok` is also sent on exit and on a signal.
 - **Refuse to inject** unless `SYS_FAILURE_EN` is set, both receivers report at least a 3D fix (`GPS_RAW_INT`, `GPS2_RAW`), and the vehicle is armed, in the air and in a position-controlled mode.
@@ -65,12 +67,11 @@ The flight vehicle carries two DroneCAN receivers, so the injection is applied i
 
 ## 6. Sequence
 
-1. After step 6 merges: sim gap 1, then cases 1–9 in CI.
+1. After step 6 merges: sim gap 1 and injection gap 2, then the cases in CI.
 2. The tool against SIH; the log report passes.
-3. Bench, props off, outdoors with a fix on both receivers: each injection from the companion, log report.
+3. After step 9, once everything has landed. Bench, props off, outdoors with a fix on both receivers: each injection from the companion, log report.
 4. Flight, Position mode, pilot ready to take Altitude or Stabilized: S `off` in hover, S `wrong` in hover, S `off` in slow forward flight, S `off` on a mission leg.
 
 ## 7. Open
 
 - The FC board and companion computer of the flight vehicle are not named yet.
-- Gap 2 (accuracy and position-error injection) and gap 6 (multi-instance SIH) have no decision: needed for case 10 and for a multi-EKF reset before flight.
