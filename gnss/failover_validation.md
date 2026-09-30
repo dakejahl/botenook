@@ -1,6 +1,6 @@
 # GNSS failover validation
 
-Status: **plan**, 2026-09-30. Nothing here is implemented. This is step 7 of [pipeline_migration.md](pipeline_migration.md) §3: show in SIH, then in flight, that a failed receiver hands over to the good one and EKF2 follows it.
+Status: **plan**, 2026-09-30. Nothing here is implemented. This is step 7 of [pipeline_migration.md](pipeline_migration.md) §3, after reporting (step 6): show in SIH, then in flight, that a failed receiver hands over to the good one and EKF2 follows it. Scope is failures the checks can see; a selected receiver that is wrong but passes its checks (stuck, slow drift) is left out.
 
 ## 1. Pass criteria
 
@@ -11,7 +11,7 @@ For one failure of the selected receiver, armed, in the air, in a position-contr
 - Local and global position stay valid. No failsafe triggers other than `gnss_lost` when `SYS_HAS_NUM_GNSS` asks for it. The flight mode does not change.
 - In Hold the vehicle does not move (SIH ground truth): the setpoint follows the reset delta. In a mission it converges onto the track in the new receiver's frame.
 - The selection does not return to the recovered receiver before disarm, and EKF2 does not reset again.
-- From step 6: one event names the switch and its reason.
+- One event names the switch and its reason, and `gnss_fusion_state` shows why GNSS was not fused in between (both from step 6).
 
 ## 2. What exists
 
@@ -28,8 +28,8 @@ For one failure of the selected receiver, armed, in the air, in a position-contr
 
 1. **The second SIH receiver can't produce a reset delta.** It is a copy of instance 0 with the lever arm added, so after the lever-arm correction the receivers agree exactly and share one noise sequence. Needed: an explicit enable, independent noise, and a per-receiver position and height bias.
 2. **No injection reaches the accuracy checks or the position.** In flight a receiver is unusable on fix < 3D, eph or epv > 50 m, sacc > 10 m/s, spoofing or jamming; only fix and jamming can be injected. Needed: an accuracy mode (eph, epv, sacc) and a position-error mode (`FAILURE_TYPE_DRIFT` is unused for GNSS). Spoofing has no knob.
-3. **No hardware build has the manager.** `CONFIG_MODULES_FAILURE_INJECTION_MANAGER` is set only in `px4_sitl`.
-4. **An injected failure is latched.** It holds until `ok` arrives; if the companion or its link dies, the receiver stays failed for the rest of the flight. Only the RC trigger releases on its own.
+3. **No hardware build has the manager.** `CONFIG_MODULES_FAILURE_INJECTION_MANAGER` is set only in `px4_sitl`. The flight test uses a local build for the test airframe's board; upstream board configs don't change.
+4. **An injected failure is latched.** It holds until `ok` arrives; if the companion or its link dies, the receiver stays failed for the rest of the flight. Accepted for the flight test: the standby carries the vehicle and the pilot lands.
 5. **MAVLink does not carry the selected receiver.** `GPS_RAW_INT` and `GPS2_RAW` are fixed receivers. Tests assert vehicle behaviour over MAVLink and the selection and resets from the log.
 6. **SIH runs one EKF2 instance.** The reset across several instances is first exercised on hardware unless a multi-IMU SIH case is added.
 
@@ -48,33 +48,29 @@ Two receivers, `SENS_GNSS_PRIME = 0`, S the selected receiver, B the standby, B 
 | 7 | S and B `off`, then B `ok` | total loss and recovery | position invalid after `EKF2_NOAID_TOUT`, failsafe; fusion resumes on B |
 | 8 | S toggled `off`/`ok` at 1 Hz | hysteresis | one switch, one reset |
 | 9 | 1 with `SENS_GNSS_PRIME = -1` | ranked selection | §1 |
-| 10 | S `stuck`, forward flight | a fault the checks can't see | open, §7 |
-| 11 | S accuracy above the relaxed gate (gap 2) | check failure on eph/sacc | §1 |
+| 10 | S accuracy above the relaxed gate (gap 2) | check failure on eph/sacc | §1 |
 
 Cases 1–9 need gap 1 only.
 
 ## 5. Flight-test tool
 
-One tool, run unchanged against SIH and the vehicle.
+pymavlink scripts in `Tools/` upstream, landing with the SIH tests and described in `docs/en/debug/failure_injection.md`. Run unchanged against SIH and the vehicle.
 
 - **Inject**: `MAV_CMD_INJECT_FAILURE` for unit GPS with a type, an instance and a duration, then `ok`. `ok` is also sent on exit and on a signal.
 - **Refuse to inject** unless `SYS_FAILURE_EN` is set, both receivers report at least a 3D fix (`GPS_RAW_INT`, `GPS2_RAW`), and the vehicle is armed, in the air and in a position-controlled mode.
 - **Record** the command acks, both receivers, events, and position validity with wall and vehicle time.
 - **Log report**: a script that reads the ULog and checks §1: selected `device_id` over time (`vehicle_gnss.receiver.device_id`), `usable` and `failed_checks`, the reset counters and deltas on `vehicle_local_position`, position error against the setpoint. The same script grades SIH and flight logs.
 
-Flight firmware needs the manager built in (gap 3) and `SYS_FAILURE_EN = 1`.
+The flight vehicle carries two DroneCAN receivers, so the injection is applied in the FC's DroneCAN GNSS bridge (`src/drivers/uavcan/sensors/gnss.cpp`); the nodes keep running. Flight firmware needs the manager built in (gap 3) and `SYS_FAILURE_EN = 1`.
 
 ## 6. Sequence
 
-1. Sim gap 1, then cases 1–9 in CI.
+1. After step 6 merges: sim gap 1, then cases 1–9 in CI.
 2. The tool against SIH; the log report passes.
 3. Bench, props off, outdoors with a fix on both receivers: each injection from the companion, log report.
 4. Flight, Position mode, pilot ready to take Altitude or Stabilized: S `off` in hover, S `wrong` in hover, S `off` in slow forward flight, S `off` on a mission leg.
 
 ## 7. Open
 
-- **A selected receiver that is wrong but passes its checks** (`stuck`, slow drift). The hub can't tell which receiver is wrong ([pipeline_migration.md](pipeline_migration.md) §2, Selection), so nothing fails over. What is left is EKF2's innovation gate and commander's divergence check. After `reset_timeout_max` EKF2 resets to the selected receiver, which is the wrong one. The expected behaviour for case 10 is not decided.
-- **Latched failures** (gap 4): a duration on the command, the RC trigger only, or accept it for a vehicle that flies on the standby anyway.
-- **Where the SIH tests land**: with the selection PR, right after it, or after reporting.
-- **Where the tool lives**: `Tools/` upstream or outside the tree; pymavlink or MAVSDK.
-- **Which board gets the manager** for the flight test, and whether that is a local build or an upstream board default.
+- The FC board and companion computer of the flight vehicle are not named yet.
+- Gap 2 (accuracy and position-error injection) and gap 6 (multi-instance SIH) have no decision: needed for case 10 and for a multi-EKF reset before flight.
