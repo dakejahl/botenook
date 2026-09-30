@@ -32,8 +32,8 @@ For one failure of the selected receiver, armed, in the air, in a position-contr
 4. **An injected failure is latched.** It holds until `ok` arrives; if the companion or its link dies, the receiver stays failed for the rest of the flight. Accepted for the flight test: the standby carries the vehicle and the pilot lands.
 5. **MAVLink does not carry the selected receiver.** `GPS_RAW_INT` and `GPS2_RAW` are fixed receivers. Tests assert vehicle behaviour over MAVLink and the selection and resets from the log.
 6. **SIH runs one EKF2 instance.** Multi-EKF is out of scope for this validation (few users).
-7. **Heading ignores injection.** `sensor_gnss_relative` has no `process_gnss`, so `off` on a receiver leaves the moving-base heading alive, while a real base failure takes the rover's heading with it. Required (Jake, 2026-09-30): `off` on the moving base must stop the heading. Two parts: the `sensor_gnss_relative` publishers (`gps`, `septentrio`, DroneCAN `gnss_relative.cpp`) apply the generic `process()` on the rover's instance, and the hub drops a moving-base heading sample while the receiver in the base slot (`SENS_GNSSn_HDG = 1`, the other slot) is silent, injected or real. The hub part is real behaviour, not injection: a rover can't hold a moving-base heading without the base, and it mirrors the receiver's own corrections timeout.
-8. **SIH has no heading.** `sensor_gps_sim` publishes no `sensor_gnss_relative`; the moving-base cases need a simulated relative heading for the rover instance from ground-truth yaw, with instance 0 as its base.
+7. **Heading ignores injection.** `sensor_gnss_relative` has no `process_gnss`, so `off` on a receiver leaves its heading alive. Required (Jake, 2026-09-30): an injected `off` takes the heading with it the way a real failure does. Heading comes from one receiver with two antennas (`SENS_GNSSn_HDG = 2`) or from a moving-base rover fed by another receiver (`SENS_GNSSn_HDG = 1`), so two parts: the `sensor_gnss_relative` publishers (`gps`, `septentrio`, DroneCAN `gnss_relative.cpp`) apply the generic `process()` on the publishing receiver's instance, which covers dual-antenna receivers completely; and for `HDG = 1` only, the hub drops the rover's heading sample while the receiver in the base slot (the other slot) is silent, injected or real. The hub part is real behaviour, not injection: a rover can't hold a moving-base heading without its base, and it mirrors the receiver's own corrections timeout. A dual-antenna receiver's heading is never gated on another receiver.
+8. **SIH has no heading.** `sensor_gps_sim` publishes no `sensor_gnss_relative`; cases 13–14 need a simulated relative heading from ground-truth yaw on a chosen instance, as dual antenna or as a rover with instance 0 as its base.
 
 ## 4. SIH cases
 
@@ -53,7 +53,7 @@ Two receivers, `SENS_GNSS_PRIME = 0`, S the selected receiver, B the standby, B 
 | 10 | S accuracy above the relaxed gate (gap 2) | check failure on eph/sacc | §1 |
 | 11 | `SENS_GNSS_PRIME = -1`, disarmed, B more accurate by more than the ratio (gap 2) | ranking on accuracy | selection moves to B after the hold |
 | 12 | `SENS_GNSS_PRIME = -1`, disarmed, S `slow` (gap 2) | ranking on update rate | selection moves to B after the hold |
-| 13 | S is the moving base of B's heading (`SENS_GNSS1_HDG = 1`), GNSS yaw fused, S `off` | position failover plus heading loss | §1 for position; yaw fusion stops without a yaw reset, EKF2 continues on the mag |
+| 13 | S is the heading source (dual antenna, `SENS_GNSS0_HDG = 2`) or the moving base of B's heading (`SENS_GNSS1_HDG = 1`), GNSS yaw fused, S `off` | position failover plus heading loss | §1 for position; yaw fusion stops without a yaw reset, EKF2 continues on the mag |
 | 14 | 13, then S `ok` | heading recovery | GNSS yaw resumes on the heading gate (#28846), no position switch back while armed |
 
 Cases 1–9 need gap 1 only; case 10 and the ranked-selection cases on eph/epv and rate need gap 2; cases 13–14 need gaps 7 and 8.
@@ -74,7 +74,7 @@ The flight vehicle carries two DroneCAN receivers, so the injection is applied i
 1. After step 6 merges: sim gap 1 and injection gap 2, then the cases in CI.
 2. The tool against SIH; the log report passes.
 3. After step 9, once everything has landed. Bench, props off, outdoors with a fix on both receivers: each injection from the companion, log report.
-4. Flight, Position mode, pilot ready to take Altitude or Stabilized: S `off` in hover, S `wrong` in hover, S `off` in slow forward flight, S `off` on a mission leg. The vehicle is rover + moving base with the base preferred, so every S `off` is also case 13: position fails over to the rover and GNSS yaw hands over to the mag.
+4. Flight, Position mode, pilot ready to take Altitude or Stabilized: S `off` in hover, S `wrong` in hover, S `off` in slow forward flight, S `off` on a mission leg. If S is the heading source (dual antenna, or the base of a moving-base rover), every S `off` is also case 13: position fails over and GNSS yaw hands over to the mag.
 
 ## 7. Open
 
