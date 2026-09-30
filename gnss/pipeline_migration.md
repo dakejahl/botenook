@@ -53,10 +53,12 @@ MAVLink                GPS_RAW_INT = preferred receiver, GPS2_RAW = the other on
 
 ### Selection (replaces blending)
 
-`SensorGnssSelector` (today `SensorGpsSelector`, which only resolves `SENS_GPS_PRIME` to an instance) grows into the state machine.
+`GnssSelector` in the hub (replacing `GpsBlending`), as built in [#28798 feat(sensors/gnss): select the GNSS receiver on failures and reported accuracy](https://github.com/PX4/PX4-Autopilot/pull/28798). Every switch resets the EKF2 position, so a switch needs a failure, a return to the preferred receiver, or a clear accuracy gain.
 
-- The preferred receiver is `SENS_GNSS_PRIME` (instance or DroneCAN node ID). The selected receiver changes only when it is not usable for `T_fail` or times out, and only to a usable one. It returns to the preferred receiver with hysteresis; while armed, only a failure causes a switch.
-- `SENS_GNSS_PRIME = -1` ranks receivers when there is no natural preference (dual independent RTK), on eph/epv, rate and latency, later EKF consistency. Fix type and satellite count aren't comparable across receivers, and on rover + moving base the rover's RTK Fixed is the worse navigation source. [#28798 feat(sensors/gps): Improve GPS selection](https://github.com/PX4/PX4-Autopilot/pull/28798) implements this: ranking switches only while disarmed, the 30% margin and 2 s hold as constants, and the per-receiver `usable` from step 3 instead of its own `EKF2_REQ_*` checks.
+- **Usable**: the latest sample passed its checks and arrived on time (within 3× the receiver's usual interval, at least 300 ms).
+- **Failed**: no usable sample for 2 s: fix loss, sustained check failures, silence, an update rate below a third. Any usable receiver replaces it, whatever its recent history. Intermittent failures: availability (fraction of the last ~10 s usable) 20 points below a receiver usable for 2 s.
+- **Preferred** (`SENS_GNSS_PRIME` instance or DroneCAN node ID; with -1 the moving base when the other slot's `SENS_GNSSn_HDG` is Moving base rover): used until it fails, whatever the other receiver reports. The selection returns to it once usable and about as available: at once while disarmed, after 10 s while armed.
+- **No preference** (`SENS_GNSS_PRIME = -1`, the default): moves after 5 s to a receiver with at most half the eph and no worse epv, both floored at 5 cm so RTK fixed receivers tie. Fix type, satellite count and update rate don't rank.
 - Divergence between receivers is computed here and published as `sensors_status_gnss.inconsistency`; commander's `gnss_lost` divergence test reads it instead of computing its own.
 - Two receivers can't vote: the hub sees that they disagree, not which one is wrong. Attributing the fault needs the EKF state (shadow innovations, §5).
 
@@ -265,10 +267,12 @@ float32[3] antenna_offset # [m] [@frame FRD] Antenna position of the selected re
 uint8 selected_instance       # [-] sensor_gnss instance of the selected receiver
 uint8 selection_count         # [-] Increments when the selected receiver changes; EKF2 resets position on a change
 uint8 selection_reason        # [@enum SELECTION] Why this receiver is selected
-uint8 SELECTION_PREFERRED = 0 # The SENS_GNSS_PRIME receiver
-uint8 SELECTION_FAILOVER  = 1 # The preferred receiver is unusable or timed out
-uint8 SELECTION_RANKED    = 2 # SENS_GNSS_PRIME = -1
-uint8 SELECTION_ONLY      = 3 # The only receiver present
+uint8 SELECTION_PREFERRED = 0 # The preferred receiver
+uint8 SELECTION_ONLY      = 1 # No other receiver has published
+uint8 SELECTION_RANKED    = 2 # No receiver is preferred, and no other one is clearly more accurate
+uint8 SELECTION_TIMEOUT   = 3 # The previously selected or the preferred receiver stopped publishing
+uint8 SELECTION_UNHEALTHY = 4 # The previously selected or the preferred receiver failed its checks or delivered samples late, continuously or often
+uint8 SELECTION_ACCURACY  = 5 # Reports a clearly better accuracy than the previously selected receiver
 
 # Check result for this sample (step 4)
 bool usable                 # Passes the checks enabled in GNSS_CHECK, and has for long enough (GNSS_REQ_TIME)
