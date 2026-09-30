@@ -17,7 +17,7 @@ For one failure of the selected receiver, armed, in the air, in a position-contr
 
 | Piece | State on main (`d5223850dd`) |
 |---|---|
-| Failure injection | `failure_injection_manager` takes `MAV_CMD_INJECT_FAILURE` (shell: `failure gps <type> -i <n>`, 1-based, 0 = all) and publishes `failure_injection`. Applied per receiver in `gps`, `septentrio`, the DroneCAN GNSS bridge, `sensor_gps_sim` and gz_bridge. Needs `SYS_FAILURE_EN` (reboot). |
+| Failure injection | `failure_injection_manager` takes `MAV_CMD_INJECT_FAILURE` (shell: `failure gps <type> -i <n>`, 1-based, 0 = all) and publishes `failure_injection`. Applied per receiver as the last step before `sensor_gnss` is published in `gps`, `septentrio`, the DroneCAN GNSS bridge (`gnss.cpp:575`), `sensor_gps_sim` and gz_bridge, so everything downstream (hub checks, timeout, selection, EKF2, commander, MAVLink streams) sees exactly what a real failure would produce for those fields. Not covered: driver-internal reactions (serial restart after data loss, DroneCAN NodeStatus), ramps, and `sensor_gnss_relative` (heading). Needs `SYS_FAILURE_EN` (reboot). |
 | GNSS failure types | `off`: nothing published. `stuck`: last good sample replayed with fresh timestamps. `wrong`: fix type from `SYS_FAIL_GPS_WRG`, jamming state from `SYS_FAIL_GPS_JAM`, position untouched. The other MAVLink types do nothing. |
 | RC trigger | `SYS_FAIL_RC_SRC/UNIT/MODE/INST`: an aux switch injects while it is held on. |
 | Second SIH receiver | `sensor_gps_sim` publishes instance 1 when `SENS_GNSS1_OFFX` or `_OFFY` is non-zero: instance 0's sample shifted by that lever arm, with its own `device_id`. |
@@ -56,12 +56,12 @@ Cases 1–9 need gap 1 only; case 10 and the ranked-selection cases on eph/epv a
 
 ## 5. Flight-test tool
 
-The shared interface is the firmware side: `failure_injection_manager` on the FC takes `MAV_CMD_INJECT_FAILURE` and the `SYS_FAIL_*` payload parameters from any MAVLink client (MAVSDK tests in CI, the `failure` shell command, the RC trigger, a companion). Nothing else is shared. The companion client is pymavlink scripts in `Tools/` upstream, landing with the SIH tests and described in `docs/en/debug/failure_injection.md`. Run unchanged against SIH and the vehicle.
+One MAVSDK C++ codebase in `test/mavsdk_tests`: scenario functions (set the `SYS_FAIL_*` payload with `Param`, `Failure::inject`, wait, assert, restore) in one tester class. The catch2 cases wrap them with arm, takeoff and flight for SIH in CI; a `gnss_failover` binary from the same CMake project wraps them for the companion: connects to the vehicle, never arms or changes mode, runs one scenario with a duration, restores on exit. Builds natively on arm64. Live observation: `Telemetry` for position, position health, mode and `GPS_RAW_INT`; `MavlinkPassthrough` for `GPS2_RAW` and `ODOMETRY.reset_counter`. The selected receiver comes from the log, or the switch event after step 6. Described in `docs/en/debug/failure_injection.md`.
 
 - **Inject**: `MAV_CMD_INJECT_FAILURE` for unit GPS with a type, an instance and a duration, then `ok`. `ok` is also sent on exit and on a signal.
 - **Refuse to inject** unless `SYS_FAILURE_EN` is set, both receivers report at least a 3D fix (`GPS_RAW_INT`, `GPS2_RAW`), and the vehicle is armed, in the air and in a position-controlled mode.
 - **Record** the command acks, both receivers, events, and position validity with wall and vehicle time.
-- **Log report**: a script that reads the ULog and checks §1: selected `device_id` over time (`vehicle_gnss.receiver.device_id`), `usable` and `failed_checks`, the reset counters and deltas on `vehicle_local_position`, position error against the setpoint. The same script grades SIH and flight logs.
+- **Log report**: Python (pyulog) in `Tools/`, reads the ULog and checks §1: selected `device_id` over time (`vehicle_gnss.receiver.device_id`), `usable` and `failed_checks`, the reset counters and deltas on `vehicle_local_position`, position error against the setpoint. The same script grades SIH and flight logs.
 
 The flight vehicle carries two DroneCAN receivers, so the injection is applied in the FC's DroneCAN GNSS bridge (`src/drivers/uavcan/sensors/gnss.cpp`); the nodes keep running. Flight firmware needs the manager built in (gap 3) and `SYS_FAILURE_EN = 1`.
 
