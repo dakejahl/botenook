@@ -1,6 +1,6 @@
 # GNSS pipeline: target architecture and migration
 
-Status: **in progress**, 2026-09-30. Steps 1–4 of §3 are merged and step 5 is in review; steps 6–9 are not started. §5 lists what the RFC review deferred. The case against blending and the selection policy are in [selection_fusion_and_heading.md](selection_fusion_and_heading.md) §6.
+Status: **in progress**, 2026-10-01. Steps 1–4 of §3 are merged and step 5 is in review; steps 6–9 are open as stacked drafts #28954–#28957. §5 lists what the RFC review deferred. The case against blending and the selection policy are in [selection_fusion_and_heading.md](selection_fusion_and_heading.md) §6.
 
 ## 1. Today
 
@@ -53,12 +53,13 @@ MAVLink                GPS_RAW_INT = preferred (or first) receiver, GPS2_RAW = t
 
 ### Selection (replaces blending)
 
-`GnssSelector` in the hub (replacing `GpsBlending`), as built in [#28798 feat(sensors/gnss): select the GNSS receiver on failures and reported accuracy](https://github.com/PX4/PX4-Autopilot/pull/28798). Every switch resets the EKF2 position, so a switch needs a failure, a return to the preferred receiver, or a clear accuracy gain.
+`GnssSelector` in the hub (replacing `GpsBlending`), as built in [#28798 feat(sensors/gnss): select the GNSS receiver on failures and reported accuracy](https://github.com/PX4/PX4-Autopilot/pull/28798). Every switch resets the EKF2 position, so a switch needs a failure, the primary receiver while disarmed, or a receiver one level higher.
 
 - **Usable**: the latest sample passed its checks and arrived on time (within 3× the receiver's usual interval, at least 300 ms).
 - **Failed**: no usable sample for 2 s: fix loss, sustained check failures, silence, an update rate below a third. Any usable receiver replaces it, whatever its recent history. Intermittent failures: availability (fraction of the last ~10 s usable) 20 points below a receiver usable for 2 s.
-- **Preferred** (`SENS_GNSS_PRIME` instance or DroneCAN node ID; with -1 the moving base when the other slot's `SENS_GNSSn_HDG` is Moving base rover): used until it fails, whatever the other receiver reports. The selection returns to it once usable and about as available: at once while disarmed, after 10 s while armed.
-- **No preference** (`SENS_GNSS_PRIME = -1`, the default): moves after 5 s to a receiver with at most half the eph and no worse epv, both floored at 5 cm so RTK fixed receivers tie. Fix type, satellite count and update rate don't rank.
+- **Primary** (`SENS_GNSS_PRIME` instance or DroneCAN node ID; with -1 the moving base when the other slot's `SENS_GNSSn_HDG` is Moving base rover): while disarmed, selected whenever it publishes, whatever the other receiver reports; otherwise the other receiver is used.
+- **Armed**: a receiver the selection left because it failed (unusable for 2 s, clearly less available, or silent) is picked again only when the current one fails, with or without a primary. Cleared on disarm.
+- **No primary** (`SENS_GNSS_PRIME = -1`, the default): receivers rank in three levels, usable < meets `GNSS_REQ_EPH/EPV/SACC/FIX` (checked in flight too) < that plus RTK fixed. The selection moves to a receiver one level higher after 10 s armed, 2 s disarmed (`selection_reason` `SELECTION_REQUIREMENTS`, `SELECTION_RTK_FIXED`). Satellite count and update rate don't rank.
 - Divergence between receivers is computed here and published as `sensors_status_gnss.inconsistency`; commander's `gnss_lost` divergence test reads it instead of computing its own.
 - Two receivers can't vote: the hub sees that they disagree, not which one is wrong. Attributing the fault needs the EKF state (shadow innovations, §5).
 
