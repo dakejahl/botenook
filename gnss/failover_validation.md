@@ -10,7 +10,7 @@ For one failure of the selected receiver, armed, in the air, in a position-contr
 - Every EKF2 instance resets horizontal position once, and height if GNSS is the height reference. The published reset delta equals the offset between the receivers after lever arms.
 - Local and global position stay valid. No failsafe triggers other than `gnss_lost` when `SYS_HAS_NUM_GNSS` asks for it. The flight mode does not change.
 - In Hold the vehicle does not move (SIH ground truth): the setpoint follows the reset delta. In a mission it converges onto the track in the new receiver's frame.
-- The selection does not return to the recovered receiver before disarm, and EKF2 does not reset again.
+- With `SENS_GNSS_PRIME` set, the selection returns to the recovered primary receiver only after it has been usable for 10 s while armed (at once while disarmed) and is about as available as the standby, with one more switch and one more reset. With -1 it doesn't return unless the recovered receiver is clearly more accurate.
 - One event names the switch and its reason, and `gnss_fusion_state` shows why GNSS was not fused in between (both from step 6).
 
 ## 2. What exists
@@ -45,10 +45,10 @@ Two receivers, `SENS_GNSS_PRIME = 0`, S the selected receiver, B the standby, B 
 | 2 | S `wrong` (2D fix), Hold | check failure | §1 |
 | 3 | S `off`, mission leg | reset while moving | §1, mission completes |
 | 4 | S `off`, GNSS height reference, B biased in height | height reset | §1, altitude held |
-| 5 | S `off`, then S `ok` | no return while armed | stays on B until disarm, then returns to S |
+| 5 | S `off`, then S `ok` | return hold while armed | stays on B for at least 10 s after S recovers, then returns to S with one more switch and reset; with `SENS_GNSS_PRIME = -1` and equal accuracy, stays on B |
 | 6 | B `off` | standby failure | no switch, no reset; `gnss_lost` per `SYS_HAS_NUM_GNSS` |
 | 7 | S and B `off`, then B `ok` | total loss and recovery | position invalid after `EKF2_NOAID_TOUT`, failsafe; fusion resumes on B |
-| 8 | S toggled `off`/`ok` at 1 Hz | hysteresis | one switch, one reset |
+| 8 | S toggled `off`/`ok` at 1 Hz | hysteresis | one switch to B and one reset; no return while S keeps failing (the return hold needs 10 s of uninterrupted usable samples) |
 | 9 | 1 with `SENS_GNSS_PRIME = -1` | ranked selection | §1 |
 | 10 | S accuracy above the relaxed gate (gap 2) | check failure on eph/sacc | §1 |
 | 11 | `SENS_GNSS_PRIME = -1`, disarmed, B more accurate by more than the ratio (gap 2) | ranking on accuracy | selection moves to B after the hold |
