@@ -1,269 +1,180 @@
-# [RFC] Improve optical flow velocity and position hold
+# [RFC] Optical flow position hold
 
-Status: draft, not authoritative. This RFC is a living document. It changes as flight data comes in, and nothing in it is decided yet.
+Status: draft plan, 2026-10-02. This replaces the earlier problem survey, which is in git history. Research behind it: `~/Downloads/project_notes/flow_testing/analysis/2026-10-02-rfc-research/`.
 
-## Summary
+Evidence tags: **[code]** read in PX4 main at [e6db1b3a14](https://github.com/PX4/PX4-Autopilot/commit/e6db1b3a14), **[measured]** in one of our logs, **[reported]** by a third party, **[derived]** arithmetic or inference never observed in flight.
 
-This RFC describes what limits optical flow navigation in PX4 today and proposes an order in which to fix it. It matters most for vehicles that hold position on flow alone, and for flight above a few metres, where every error in flow velocity grows with height.
+## Goal
 
-The proposal makes the following changes:
+A quadcopter with an ARK Flow (PAW3902) or ARK Flow MR (PAA3905) on DroneCAN and no GNSS holds position in Position mode. Flow as a second velocity source next to GNSS is out of scope.
 
-1. The sensors module corrects the barometer for thrust, and EKF2 detects ground effect from measured height, so height above ground stays accurate when the rangefinder isn't fused.
-2. `VehicleOpticalFlow` pairs every flow sample with a gyro sum over exactly the same time, and drops a sample without one.
-3. EKF2 fuses only frames the sensor actually tracked, and weights them by the sensor's raw tracking quality.
-4. EKF2's flow noise accounts for the sensor's resolution, the sample's length, and the vehicle's rotation rate.
-5. The position controller reduces its horizontal gains as height grows when flow is the only horizontal aid.
+Three symptoms define the work:
 
-Driver fixes for items 2 and 3 are in review as [#28632 fix(optical_flow): avoid resetting on poor tracking quality](https://github.com/PX4/PX4-Autopilot/pull/28632).
+1. Hold is fine below about 6 m and degrades with height into wandering or toilet-bowling.
+2. Indoors, or whenever the barometer corrupts height above ground (HAGL), the vehicle drifts, because flow velocity is angular rate times HAGL.
+3. Over low-texture surfaces such as indoor concrete the flow data is bad and gets fused anyway.
 
-Background notes: [Optical flow performance vs altitude](https://github.com/dakejahl/botenook/blob/main/optical_flow/performance_vs_altitude.md) covers the sensor limits and the noise model, and [Rangefinder altitude and terrain estimation](https://github.com/dakejahl/botenook/blob/main/rangefinder/altitude_and_terrain_estimation.md) covers how EKF2 uses the barometer and rangefinder for height. The flight data comes from [dakejahl/PX4-Autopilot#58 feat(optical_flow): add raw capture for GNSS comparison](https://github.com/dakejahl/PX4-Autopilot/pull/58), which logs every flow frame from an ARK Flow MR and compares it with GNSS velocity.
+Proposed acceptance, to be confirmed by step 0:
 
-## Terms
+| Envelope | Target |
+|---|---|
+| Below 5 m over a surface the chip tracks | Within 1 m for 60 s hands-off (the existing MC_06 test card criterion) |
+| 5 m to the rangefinder's daylight reach, about 15 m | Bounded drift, no oscillation |
+| Range lost or surface not trackable | Velocity stays bounded for a stated time, then a defined failsafe. No fly-away |
+| Above rangefinder reach | Not supported. The height ceiling keeps the vehicle out |
 
-- **Flow sensor**: a downward-facing camera chip that reports how far the image moved since the last read. ARK Flow uses the PixArt PAW3902, and ARK Flow MR uses the PAA3905.
-- **Count**: the smallest image movement the sensor reports. One count is 2.13 mrad of angle.
-- **Flow rate**: image movement per second, in rad/s. It contains both the vehicle's rotation and its movement over the ground.
-- **Gyro compensation**: subtracting the rotation that the gyro measured from the flow rate, which leaves the part caused by movement.
-- **HAGL**: height above ground level. EKF2 estimates it as the distance between its terrain state and its altitude.
-- **Window**: the time span that one flow sample covers. The flow and gyro sums for a sample must cover the same window.
-- **SQUAL**: the number of image features the PixArt chip tracks in a frame. Drivers publish it, or a value derived from it, as the sample's quality.
-- **Thrust error**: a barometer error caused by propeller wash, which changes the static pressure at the sensor as thrust changes.
-- **Ground effect**: a barometer error near the ground, where rotor wash reflects off the surface.
+No comparable product documents a hold at 20 m: DJI's camera-based system claims 0.3 to 13 m, Parrot below 5 m **[reported]**.
 
-## Problems
+## Evidence so far
 
-Flow gives velocity as the product of two estimates:
+- No test flight has exercised the goal. Every Position-mode flight had GNSS position and velocity fused and GNSS as the height reference **[measured]**.
+- The only flow-only hold data is 9 unplanned seconds at the start of flight 5 (`16_26_40`), over sunlit black asphalt before GNSS fusion began: velocity 0.85 m/s RMS off GNSS, about 5 m of position divergence, pilot takeover **[measured]**.
+- No log exists for: a hover above 4 m, anything above 16 m, indoors, concrete, the barometer as height reference, the rangefinder invalid for more than 0.6 s with flow fused, or a PAW3902 with flow fused.
 
-`velocity = (flow rate − rotation rate) × HAGL`
+The mechanisms below therefore come from code. Their ranking is a hypothesis until step 0 is flown.
 
-An error in either factor becomes a velocity error, and every error in the first factor is multiplied by height.
+## How it works today
 
-### HAGL falls back to the barometer
+The node driver publishes one sample per chip frame. The node's `VehicleOpticalFlow` pairs it with a gyro integral and sends it over DroneCAN without a timestamp. The FC stamps it on receipt, re-accumulates to `SENS_FLOW_RATE` (70 Hz), and EKF2 fuses line-of-sight rate against `velocity / HAGL`, where HAGL is the terrain state plus altitude **[code]**.
 
-While the rangefinder is fused, the terrain state follows it and HAGL is accurate. In test flights up to 12 m, replacing EKF2's HAGL with the raw range changed the velocity error by less than 0.1 m/s.
+With `EKF2_RNG_CTRL` 1, the default and what the ARK docs prescribe, the estimator has two structures **[code]**:
 
-When the rangefinder isn't fused, the terrain state keeps its last value, and HAGL moves with EKF2's altitude. Without GNSS, the barometer is the height reference, and EKF2 estimates no bias for its height reference. HAGL then follows every barometer error. This happens in the following cases:
+| Condition | Height reference | Range innovation corrects | Flow updates terrain | Terrain process noise |
+|---|---|---|---|---|
+| HAGL below `EKF2_RNG_A_HMAX` (5 m), speed below `EKF2_RNG_A_VMAX` (1 m/s), range healthy | Range | Height | No | Off |
+| Higher or faster, range healthy | Barometer | Terrain only | Yes | On |
+| Range unhealthy | Barometer | Nothing | Yes | On |
 
-- Above the rangefinder's reach. In daylight over pavement, the ARK Flow MR's rangefinder reaches 13 to 21 m, depending on its measurement profile.
-- During dropouts. In four of five test flights, the rangefinder reported invalid data on 22 to 31 % of airborne samples between 1.4 and 4.5 m.
-- When the range fails EKF2's consistency check. The check compares how fast the range changes with EKF2's vertical velocity, which partly comes from the barometer.
+Other facts that shape the plan **[code]**:
 
-A HAGL error scales every velocity by the same fraction. A 2 m error at 10 m makes every velocity 20 % wrong.
+- Flow noise is 0.36 to 0.50 rad/s for every realistic frame. That is about 1 m/s per sample at 2 m and 7 to 10 m/s at 20 m. There is no window, rotation-rate or height term.
+- Flow is either fused at that weight or rejected. After 1 s without fusion flow stops, it cannot restart for 2 s, and 5 s after the last fusion (`EKF2_NOAID_TOUT`) position goes invalid and Position mode falls back to Altitude.
+- Multicopter drag fusion is the only dead-reckoning aid. It is built on every ARK FC, off by default, and not counted as horizontal aiding.
+- No position-controller gain or filter depends on HAGL. `vxy_max` is `4 × HAGL` m/s.
+- The height ceiling `hagl_max_xy` exists but is 99 m at the defaults (`SENS_FLOW_MAXHGT` 100, `UAVCAN_RNG_MAX` 999), and it is dropped when HAGL goes invalid.
+- The default log profile records `distance_sensor` and `sensor_optical_flow` at 1 Hz, so none of this is visible in a customer log.
 
-### The barometer is wrong under thrust and near the ground
+## Symptom 1: hold degrades with height
 
-The following two errors are largest where flow vehicles fly:
+| Mechanism | Evidence | Step |
+|---|---|---|
+| The estimator changes structure at 5 m (table above) | **[code]**. `cs_rng_hgt` dropped at 5.03 m in flight 6 **[measured]**. Whether it degrades the hold is untested. `boards/ark/pi6x` already sets `EKF2_RNG_A_HMAX` 25 | 0.3, 1 |
+| A derotation residual (chip-to-gyro scale, timing, mount flex) is a false rate that HAGL turns into a false velocity, and the fixed-gain controller turns that into attitude. The loop gain of that path is proportional to HAGL | **[derived]**. ArduPilot detunes with height "to prevent body rate feedback into flow rates destabilising the control loop", and logged a 0.5 Hz, ±20° limit cycle at 50 m without it ([ArduPilot/ardupilot#33568](https://github.com/ArduPilot/ardupilot/pull/33568)) **[reported]**. PX4's docs tell users to reduce the flow scale factor above 10 to 20 m, which is a gain reduction by mis-scaling | 0.3, 4.1 |
+| Flow weight falls as 1/HAGL, so the estimator coasts on the IMU between weak corrections | **[derived]** from the noise model | 0.3, 4.2 |
+| A line-of-sight residual of 0.15 to 0.3 rad/s at 11 to 16 m that the gyro source, range source, timing and window length do not explain. The chip still reports 94 % of expected counts there | **[measured]**, one 16 s manoeuvring segment in flight 6. Cause unknown | 4.3 |
+| Quantization at a fixed window | **[derived]**, and the same segment contradicts it as the dominant term: error does not fall with window length | Deprioritised |
+| Above rangefinder reach, symptom 2 applies permanently. Daylight reach over asphalt is 13 to 21 m (LV85D) and 16 to 19 m (LX85D) | **[measured]** on ARK DIST boards; 15.2 m over grass on the Flow MR | 1 |
 
-- **Thrust error.** On an ARK FPV flight controller with a BMP390, altitude error followed thrust with a correlation of 0.91 and reached about 7 m, as reported in [#26924 feat(sensors): barometer thrust compensation with online estimator](https://github.com/PX4/PX4-Autopilot/pull/26924). PX4 has no thrust compensation. The `EKF2_PCOEF_*` static pressure compensation needs a wind estimate, which a multicopter doesn't have by default.
-- **Ground effect.** EKF2 sets its ground effect flag when HAGL is below `EKF2_GND_MAX_HGT` (0.5 m), or from the land detector when HAGL is invalid. While the flag is set, EKF2 ignores negative barometer innovations up to `EKF2_GND_EFF_DZ` (4 m). This assumes one direction of error, but the direction depends on where the barometer sits on the airframe. In 15 of 20 public logs, the takeoff error had the other sign, with peaks near 4 m, as reported in [#26655 fix(ekf2): apply baro ground effect deadzone symmetrically](https://github.com/PX4/PX4-Autopilot/pull/26655).
+A heading error cannot cause toilet-bowling in flow-only flight, because measurement and control share the same yaw. A flow mounting-yaw error can, and so can HAGL-scaled rotation leakage **[derived]**. `SENS_FLOW_ROT` has 45° steps.
 
-The ground effect flag also depends on HAGL, which the barometer corrupts when the rangefinder isn't fused. At takeoff, both errors appear at once, because thrust rises as the vehicle leaves the ground.
+## Symptom 2: wrong HAGL
 
-### Gyro errors grow with height
+While range is fused, HAGL is right in every `EKF2_HGT_REF` and `EKF2_RNG_CTRL` combination **[code]**. Replacing EKF2's HAGL with the raw range changed velocity error by less than 0.1 m/s in two of three flights **[measured]**. The damage happens in the gaps:
 
-The flow sensor sees the vehicle's rotation and its movement at the same time. At height, the movement part is small. At 12 m in a test flight, one frame held 2.7 mrad of rotation and 1.6 mrad of movement. Velocity is then the small difference between two larger numbers. An error of 0.01 rad/s in that difference is 2 cm/s at 2 m and 20 cm/s at 20 m.
+| Mechanism | Evidence | Step |
+|---|---|---|
+| Range is invalid for 0.7 to 0.9 s at every lift-off and 1 to 7 s before every touchdown, plus a few 0.2 to 0.6 s runs in between: 3 to 9 % of airborne samples | **[measured]**, flights 1 to 6 | 2.4 |
+| Each invalid frame costs `EKF2_RNG_QLTY_T` (1 s) of range health, and its innovation ends conditional range aid in the same step | **[code]** | 2.4 |
+| During a gap the barometer is an unopposed reference (frozen bias, one-sided ground-effect deadzone, no thrust model), flow keeps fusing at full weight on that HAGL with no time limit, and flow moves the terrain state | **[code]**. Barometer error under thrust on an ARK FPV: +8 to +10 m at 1 m true height **[measured]** | 2.3 to 2.6 |
+| At takeoff flow starts by resetting velocity to a filtered flow velocity scaled by a stale HAGL. The reset does not check HAGL freshness | bresch's trace of an indoor log in [PX4/PX4-Autopilot#24653](https://github.com/PX4/PX4-Autopilot/issues/24653) **[reported]**, **[code]** | 2.1 |
+| With terrain invalid and flow unfused for 1 s, `resetTerrainToFlow()` sets HAGL to `EKF2_MIN_RNG` (0.01 m). That is below `SENS_FLOW_MINHGT`, so flow stops until range returns | **[code]** | 2.2 |
 
-Test flights with an ARK Flow MR found these errors:
+No log has been reduced to "HAGL was off by x %, so flow velocity was off by x %". Height steps under the vehicle (toilet-bowling over furniture, [PX4/PX4-Autopilot#27282](https://github.com/PX4/PX4-Autopilot/issues/27282)) are a separate path tracked in [PX4/PX4-Autopilot#27110](https://github.com/PX4/PX4-Autopilot/issues/27110).
 
-- **Vibration.** The flow node's gyro read 1 rad/s RMS in pitch, against 0.2 rad/s on the flight controller. [#28624 feat(invensense): board-selectable anti-alias bandwidth for CAN flow nodes](https://github.com/PX4/PX4-Autopilot/pull/28624) fixed this with an anti-alias filter on the node's IMU.
-- **Mismatched windows.** The driver sometimes read the same frame twice and paired the image movement with the next frame's gyro sum. This affected 585 of 1331 reads in one night flight. The node's gyro buffer could also cover less than half of a long window. #28632 fixes both.
-- **Chip errors during rotation.** After a pitch and roll at 12 m, the chip reported 115 counts where the gyro and attitude predicted 27. That one second carried 6.55 m/s of error, while the other 13 seconds averaged 0.66 m/s. `VehicleOpticalFlow` passed the sample through.
+## Symptom 3: low-texture surfaces
 
-Two more gaps are visible in the code:
+| Mechanism | Evidence | Step |
+|---|---|---|
+| Main fuses every frame with quality of at least 1 at nearly full weight. A zero-motion frame passes the 3σ gate | **[code]**. Flight 5: SQUAL median 61, 56 % of frames zero while moving, 94 % fused, flow-to-truth gain 0.3 **[measured]** | 3.1 |
+| The PAA3905 challenging-surface flag only prints a warning | **[code]** | 3.1 |
+| Low SQUAL under-reports motion. In daylight, frames between SQUAL 60 and 85 carried 50 to 80 % of true motion; at night in super-low-light mode the same band was noise | **[measured]**. Chan et al. 2010 found the same multiplicative bias on other mouse sensors **[reported]** | 0.5, 3.1 |
+| Gating instead of fusing hands the vehicle to the 1 s, 2 s, 5 s timeline above with no dead-reckoning aid. With a floor of 85 over grass, flow was active 39 % of airborne time | **[code]**, **[measured]** with GNSS carrying the estimate. How fast velocity diverges in a blind window is unmeasured | 0.5, 3.2 |
 
-- If no gyro samples cover a window, `VehicleOpticalFlow` publishes the flow without compensation.
-- The DroneCAN flow message has no timestamp. The flight controller stamps each sample when it arrives, and `EKF2_OF_DELAY` (7 ms) stands in for the transport delay.
+## Plan
 
-### Resolution coarsens with height
+### Step 0: measure
 
-The sensor's resolution is fixed in angle. On the ground, one count covers a distance that grows with height, and the smallest velocity step a sample can show depends on its window. The following table shows both:
+No firmware changes. Every flight logs flow, range, estimator flags and aid sources at full rate, with RTK GNSS logged and not fused (`EKF2_GPS_CTRL` 0).
 
-| HAGL | Ground distance per count | Velocity step, 20 ms window | Velocity step, 100 ms window |
-|---|---|---|---|
-| 2 m | 4.3 mm | 0.21 m/s | 0.04 m/s |
-| 10 m | 2.1 cm | 1.07 m/s | 0.21 m/s |
-| 20 m | 4.3 cm | 2.13 m/s | 0.43 m/s |
-
-A slow drift at height is mostly invisible. At 20 m, a drift of 0.3 m/s moves the image by one count every 143 ms, so most samples show zero and EKF2 gets a correction only when a count arrives. Users report slow drift and a rolling oscillation at 20 m, which fits this picture.
-
-A longer window makes the step finer. The sensors module sums frames at a fixed rate, `SENS_FLOW_RATE` (70 Hz), at every height.
-
-### EKF2 fuses frames the sensor can't track
-
-Below a SQUAL of about 85, the PAA3905 stops tracking reliably. Between SQUAL 60 and 85, it reported 50 to 80 % of the true movement over grass and 30 to 60 % over pavement. Below 60, its output was noise. Over grass at 2 m, most frames fall between 60 and 78.
-
-EKF2 accepts every frame with a quality of at least `EKF2_OF_QMIN` (1). In a daylight flight over pavement, EKF2 fused 95 % of samples, and their velocity correlated 0.28 with EKF2's own.
-
-Two more problems make this worse:
-
-- [#28625 fix(optical_flow): normalize PixArt SQUAL onto the 0-255 quality contract](https://github.com/PX4/PX4-Autopilot/pull/28625) maps each camera mode's noise floor to quality 0. The tracking limit sits at the same raw SQUAL in every mode, so after mapping it becomes quality 67 in bright light and 1 in the darkest mode. No single `EKF2_OF_QMIN` separates good frames from bad.
-- Before #28632, the drivers treated low SQUAL as a hardware failure and reset the chip. In a 102 s night flight, the driver reset 72 times and delivered no flow for 66 s.
-
-### The noise model ignores window length and rotation
-
-EKF2 sets the assumed noise of each flow sample from its quality alone. The noise ramps from `EKF2_OF_N_MAX` at `EKF2_OF_QMIN` to `EKF2_OF_N_MIN` at quality 255. This model has the following gaps:
-
-- The noise doesn't shrink as the window grows, although quantization noise does. A long window gets the same weight as a short one.
-- The noise doesn't grow with rotation rate, although compensation errors do.
-- The ramp ends at quality 255, but raw SQUAL rarely exceeds 120, so good frames get close to the worst-case noise.
-- EKF2 treats errors in consecutive samples as independent. Measured errors have a lag-1 autocorrelation of 0.8, so EKF2 is more confident than the data supports.
-
-### Position control doesn't account for height
-
-When flow is the only horizontal aid, EKF2 publishes a speed limit, `vxy_max`, equal to half the sensor's maximum flow rate times HAGL. That is about 4 m/s per metre of height. The limit grows with height, and so does the smallest velocity step that flow resolves. Nothing reduces the position controller's gains at height. The same flow error is a velocity error ten times larger at 20 m than at 2 m, and the controller responds to it with the same gain.
-
-Near the ground, the same limit is too tight. At 0.3 m, manual flight is limited to 1.2 m/s, as reported in [#26786 fix(flight_mode_manager): remove optical flow velocity constraint in manual modes](https://github.com/PX4/PX4-Autopilot/pull/26786).
-
-ArduPilot has scaled its horizontal velocity gains by 4 / max(HAGL, 4) during flow flight since 2014.
-
-## Proposal
-
-The following diagram shows where each change sits:
-
-```mermaid
-flowchart LR
-    chip["Flow sensor"] --> vof["VehicleOpticalFlow<br/>flow and gyro sums"]
-    gyro["Gyro"] --> vof
-    baro["Barometer"] --> air["sensors module<br/>thrust compensation"]
-    rng["Rangefinder"]
-    vof -- "vehicle_optical_flow" --> ekf2["EKF2<br/>HAGL, ground effect, flow noise"]
-    air -- "vehicle_air_data" --> ekf2
-    rng -- "distance_sensor" --> ekf2
-    ekf2 -- "vehicle_local_position" --> pc["Position controller<br/>height-scaled gains"]
-```
-
-On ARK Flow and ARK Flow MR, the flow sensor, its gyro, and a first `VehicleOpticalFlow` run on the flow node, which sends the sums over DroneCAN.
-
-### Compensate the barometer for thrust
-
-The sensors module corrects each barometer for thrust before EKF2 uses it:
-
-- The correction is linear in thrust, with one coefficient per barometer. [#27885 feat(sensors): barometer thrust compensation](https://github.com/PX4/PX4-Autopilot/pull/27885) continues #26924 in this form and moves the `EKF2_PCOEF_*` compensation into the sensors module with it.
-- Thrust is divided by the hover thrust estimate, so battery sag doesn't look like a pressure change.
-- A calibration flight finds the coefficient. The flight includes climbs and descents, because hover alone doesn't change thrust enough.
-- A fixed, calibrated coefficient comes first. An online estimator can follow.
-
-This follows the other barometer corrections, such as thermal compensation, which the sensors module applies before EKF2. ArduPilot added the same linear correction in [ArduPilot/ardupilot#28982 Baro thrust scaling](https://github.com/ArduPilot/ardupilot/pull/28982).
-
-### Detect ground effect from measured height
-
-Ground effect handling uses height that the rangefinder measures, not estimated HAGL:
-
-- The flag is set while the measured range is below a threshold. Without a valid range, the land detector sets it at takeoff and landing.
-- The flag holds through short rangefinder dropouts, and a timeout clears it, so a stuck flag can't disable the barometer for long.
-- While the flag is set, EKF2 reduces the barometer's weight for errors in both directions.
-- The barometer bias estimate doesn't learn while the flag is set.
-
-The direction of the error depends on the airframe, so a one-sided gate is wrong on most vehicles. Measured height avoids the loop in which the barometer corrupts the HAGL that decides whether to trust the barometer. ArduPilot bounds its takeoff flag with a height gate and a timeout in [ArduPilot/ardupilot#32472 Copter: add ground effect altitude and timeout parameters](https://github.com/ArduPilot/ardupilot/pull/32472).
-
-### Keep the rangefinder fused
-
-Whenever the rangefinder is fused, HAGL doesn't depend on the barometer. The work includes these items:
-
-- a fix for the rangefinder dropouts at low height, once their cause is known
-- a configured rangefinder maximum that matches what the sensor measures in daylight
-- a height ceiling inside the rangefinder's reach when flow is the only horizontal aid, so the vehicle doesn't climb into barometer-only HAGL
-
-The dropouts seen so far happen below 5 m, where thrust error and ground effect are largest, so each one hands HAGL to the barometer when the barometer is least accurate.
-
-### Give every flow sample its own gyro sum
-
-The flow and gyro sums of a sample cover exactly the same window:
-
-- The driver never reads a frame twice, and a timeout read never takes part of the next frame's window. #28632 does this.
-- The gyro buffer covers the whole window at the node's gyro rate. #28632 does this.
-- A window without full gyro coverage is dropped instead of published without compensation.
-- DroneCAN flow carries the node's sample time, mapped through the bus time base as other DroneCAN sensors have been since [#28176 fix(uavcan): publish UNKNOWN node timestamps until time-synced and map them through the bus time base on the FC](https://github.com/PX4/PX4-Autopilot/pull/28176).
-
-At height, the rotation part of a frame is larger than the movement part, so any error in the gyro sum shows up at full size in the velocity.
-
-### Gate and weight frames by raw SQUAL
-
-Quality is the chip's raw SQUAL, and EKF2 fuses only frames above a tracking floor:
-
-- The drivers publish raw SQUAL in every camera mode.
-- A frame below the floor is published as blind, with quality 0, over its own window. `VehicleOpticalFlow` keeps blind time out of the flow and gyro sums.
-- A frame below the floor doesn't reset the chip.
-- `EKF2_OF_QMIN` sits at the floor, and the noise ramp ends at a new `EKF2_OF_QMAX` instead of 255.
-
-#28632 does all of this. Everything except the final floor of 60 has flown. Frames between 60 and 85 still under-report movement, so the floor trades coverage for accuracy. Over grass at 2 m, a floor of 85 marked 73 % of windows blind in flight. An offline rebuild of the same flight with a floor of 60 kept 97 % of windows, at 1.1 m/s RMS error against GNSS.
-
-### Add resolution, window length, and rotation to the noise model
-
-EKF2's flow noise combines three terms:
-
-- the quality term, as today
-- a quantization term: the sensor's resolution divided by the window length. The resolution travels with each sample in a new `sensor_optical_flow` field
-- a rotation term that grows with the body rate
-
-With quantization in the model, a longer window earns more weight without retuning. The window can then grow with height, so each sample covers a similar distance on the ground: short near the ground for fast response, and longer at height, where one count covers several centimetres.
-
-### Scale position control with height
-
-When flow is the only horizontal aid, the position controller reduces its horizontal gains as HAGL grows:
-
-- EKF2 publishes a gain scale in `vehicle_local_position`, next to `vxy_max`. The position controller applies it to the horizontal velocity loop.
-- The speed limit subtracts a margin for rotation from the maximum flow rate before it scales with HAGL.
-- Manual modes get a usable speed near the ground. Review of #26786 preferred raising the minimum speed limit over removing the scaling.
-
-Flow's velocity noise grows with height, and a fixed gain turns that noise into attitude motion. [ArduPilot/ardupilot#33569 AP_NavEKF3: make the optical-flow nav gain detune height configurable (EK3_FLOW_GAIN_H)](https://github.com/ArduPilot/ardupilot/pull/33569) makes the height of ArduPilot's scale configurable.
-
-## Compatibility
-
-This proposal changes behavior and interfaces:
-
-- **Quality.** Raw SQUAL replaces the per-mode quality from #28625. The flow node computes quality and the flight controller's `EKF2_OF_QMIN` interprets it, so both must run matching firmware. ARK's `release_ark` branch already sends raw SQUAL.
-- **Parameters.** `EKF2_OF_QMIN`, `EKF2_OF_N_MIN`, and `EKF2_OF_N_MAX` change defaults, and `EKF2_OF_QMAX` is new. Stored values override the new defaults and need a reset. #27885 renames `EKF2_PCOEF_*` to `SENS_BARO_K_*`. `EKF2_GND_EFF_DZ` and `EKF2_GND_MAX_HGT` change meaning or go away.
-- **Messages.** `sensor_optical_flow` gains a resolution field. A timestamp on DroneCAN flow needs a new or extended DroneCAN message.
-- **Open PRs.** [#28000 feat(ekf2): support up to two optical flow sensors](https://github.com/PX4/PX4-Autopilot/pull/28000) moves per-sensor flow parameters into the sensors module. The noise model changes here follow the same split.
-
-## Rollout
-
-The work lands in this order:
-
-1. Driver fixes and the raw SQUAL gate: #28632, in draft.
-2. Barometer thrust compensation: #27885.
-3. Ground effect detection from measured height. #26655 was closed to wait for step 2.
-4. Rangefinder availability: low-height dropouts, range limits, and the height ceiling.
-5. Gyro sums: dropped windows without gyro coverage, and a timestamp on DroneCAN flow.
-6. The noise model, then a window that grows with height.
-7. Height-scaled position control and speed limits.
-
-Step 1 is already written and doesn't depend on the others. Steps 2 to 4 come next because every later result is scaled by HAGL: tuning the noise model or the controller on a HAGL that is 20 % wrong fits the tuning to the error. Thrust compensation comes before ground effect because both errors appear together at takeoff, and the ground effect gate can't be sized until the thrust error is gone. Step 5 doesn't depend on steps 2 to 4 and can land alongside them.
-
-## Alternatives considered
-
-- **Use the rangefinder as the height reference.** With `EKF2_HGT_REF` set to range, HAGL doesn't depend on the barometer while the range is valid. But EKF2 doesn't check its height reference against other sensors, so altitude follows the ground, and above the range the vehicle has no height reference at all.
-- **Retune `EKF2_OF_N_MIN` and `EKF2_OF_N_MAX`.** [#25365 EKF2: adjust min and max noise of OF-data](https://github.com/PX4/PX4-Autopilot/pull/25365) proposed new defaults and closed without flight results. No single pair fits every window length, height, and rotation rate, because the real noise depends on all three.
-- **Compensate with the flight controller's gyro.** In test flights, using the flight controller's gyro instead of the node's changed the velocity error by at most 0.05 m/s. The node's gyro moves with the camera, which matters where the mount flexes: the node's pitch axis moved independently of the flight controller above about 4 Hz.
-- **Normalize SQUAL per camera mode.** #28625 did this. The tracking limit sits at the same raw SQUAL in every mode, so normalization moves it to a different quality in each mode.
-- **Apply the ground effect deadzone in both directions.** #26655 did this. It hides the barometer after every flag instead of removing the error, and it can't tell ground effect from thrust error.
-
-## Feedback requested
-
-1. **A separate height filter for flow.** [ArduPilot/ardupilot#32389 AP_NavEKF3: add 2-state IMU-aided AGL Kalman filter for optical flow](https://github.com/ArduPilot/ardupilot/pull/32389) scales flow with a small filter fed by the rangefinder, so barometer errors in the main filter don't reach flow velocity. EKF2 already has a terrain state. Does a separate filter add enough to be worth a second height estimate?
-2. **Thrust on tilting airframes.** On tailsitters and tiltrotors, `thrust_z` includes forward thrust. Should the correction use thrust along the barometer's axis, or should it apply only to multicopters at first?
-3. **Where the window is chosen.** The sensors module sums flow at a fixed rate, but a window that grows with height needs HAGL, which EKF2 owns. Should EKF2 sum flow itself?
-4. **Ground effect response.** The options are a two-sided deadzone, a larger barometer noise, or pausing barometer fusion. Which one keeps altitude hold stable at takeoff without hiding a real climb?
-5. **Correlated errors.** Consecutive flow errors are strongly correlated. Is a lower fusion rate enough, or does EKF2 need a flow error state, as proposed for GNSS in [GNSS coloured position error and EKF bias states](https://github.com/dakejahl/botenook/blob/main/gnss/ekf_position_bias.md)?
-
-## Measurements still needed
-
-- A flight above 16 m with flow fused. No log exists yet.
-- A flight with flow fused while the rangefinder is invalid. The effect of barometer error on flow velocity is derived, not measured.
-- Whether thrust changes cause the rangefinder to fail EKF2's consistency check.
-- The cause of the rolling oscillation at height. The link to resolution and control gain is derived, not reproduced.
-- The cause of the rangefinder dropouts between 1.4 and 4.5 m.
-- Whether the chip keeps movement smaller than one count between reads. Below one count per frame, it reported 85 to 87 % of the expected movement, against 93 to 100 % at two to five counts per frame.
-- The PAW3902's tracking limit. Almost no ARK Flow data exists.
-- The thrust coefficient across airframes and air densities.
-
-## Future work
-
-- **Flow without a rangefinder.** Flow can't start as the only aid without a valid HAGL. A drag model or a thrust-corrected barometer could provide one.
-- **Terrain steps.** [#27110 Rangefinder step-changes cause altitude jumps in Terrain Hold with optical flow](https://github.com/PX4/PX4-Autopilot/issues/27110) tracks altitude jumps when the ground under the vehicle steps.
-- **Altitude semantics.** [#27330 \[RFC\] EKF2 altitude semantics for Flow+Range and Multi-EKF](https://github.com/PX4/PX4-Autopilot/issues/27330) covers which sensor defines altitude. This RFC doesn't change that.
-- **In-flight scale calibration.** ArduPilot fits the flow scale while the pilot rocks the vehicle in roll and pitch. PX4 has only `SENS_FLOW_SCALE`.
-- **Flow in simulation.** [#28270 feat(SIH): Added optical flow sensor](https://github.com/PX4/PX4-Autopilot/pull/28270) adds flow to SIH, which allows regression tests for the noise model and control changes.
-- **Flow logging.** The default profile logs the flow aid source and `vehicle_optical_flow` at 2 Hz, too slow to diagnose flow problems from a customer log.
-- **Chip state over DroneCAN.** [dakejahl/PX4-Autopilot#49 uavcannode: add FlowMeasurementAux for ARK Flow / Flow MR diagnostics](https://github.com/dakejahl/PX4-Autopilot/pull/49) sends the camera mode, shutter, and rejected-frame counts.
+| # | Test | Decides |
+|---|---|---|
+| 0.1 | Desk: reduce the public logs in [#24653](https://github.com/PX4/PX4-Autopilot/issues/24653), [#27282](https://github.com/PX4/PX4-Autopilot/issues/27282) and [#26924](https://github.com/PX4/PX4-Autopilot/pull/26924), and `hover_with_throttle_punches.ulg` | Size of the HAGL error at lift-off, how long range is unfused, and whether flow velocity is off by the same fraction |
+| 0.2 | Bench: test-vehicle barometer in sun and shade. It swung 100 to 450 m in both daylight flights | Prerequisite for any barometer-referenced daylight flight on that airframe |
+| 0.3 | Height ladder: flow-only hold, 60 s hands-off at 2, 4, 6, 8, 10 and 15 m over a tracking surface. Repeat 6 and 15 m with (a) `EKF2_RNG_A_HMAX` raised, (b) `MPC_XY_P` and `MPC_XY_VEL_P_ACC` halved, (c) FC `SENS_FLOW_RATE` 10 | Where the hold degrades, and which symptom-1 mechanism dominates. A 0.2 to 1 Hz attitude-setpoint peak that shrinks with gain is the control loop; a slow walk that does not is the estimator |
+| 0.4 | ARK FPV with an ARK Flow, barometer reference: five takeoffs to 1.5 m, then at 3 m cover the rangefinder for 20 s while stepping throttle | HAGL error and flow velocity scale during a range gap. First PAW3902 data |
+| 0.5 | Node on a cart over indoor concrete at 1 and 2 m, both chips. Then a flow-only hold over an outdoor concrete slab with main, floor 60 and floor 85. Then EKF replay with flow masked, drag fusion off and on | Whether either chip tracks concrete and at what SQUAL, fuse versus gate, blind-window drift rate, and whether drag fusion bridges it |
+
+### Step 1: defaults, docs and logging
+
+- ARK Flow docs and board defaults: `SENS_FLOW_MAXHGT` and `UAVCAN_RNG_MAX` inside measured daylight reach, `EKF2_RNG_QLTY_T`, `SENS_FLOW_MAXR` on the MR page, and `EKF2_RNG_A_HMAX` if 0.3(a) moves the boundary.
+- Remove the docs' advice to reduce the flow scale factor at height.
+- Default log profile: flow, range and their aid sources at a rate that shows dropouts.
+- Land the driver fixes in [#28632](https://github.com/PX4/PX4-Autopilot/pull/28632) that flight 4 verified (no reset on low SQUAL, no double reads, matched gyro window: 0 resets, 1 bad pair in 3555 reads). The SQUAL floor, `EKF2_OF_QMAX` and the noise defaults are unflown and wait for 0.5.
+
+### Step 2: HAGL integrity
+
+1. Reset velocity to flow only when HAGL comes from a recent range fusion.
+2. Remove the `resetTerrainToFlow()` dead end when flow is the only horizontal aid.
+3. Flow does not update the terrain state when it is the only horizontal aid. Height is unobservable from flow in a hover (Grabe 2015, de Croon 2016), and ArduPilot has never allowed it. Terrain validity then lapses about 1 s after range stops below 5 m, so this is designed together with item 4.
+4. One range-gap policy: an invalid frame costs neither a second of range health nor conditional range aid; during a gap HAGL coasts from the last range without following barometer error; after a bound, HAGL and flow velocity are invalid and the failsafe is the defined one.
+5. Ground effect: inflate barometer variance for both signs over a window with a minimum hold time, and freeze barometer bias learning inside it. Needs the logs from 0.1 and 0.4.
+6. Barometer thrust compensation, [#27885](https://github.com/PX4/PX4-Autopilot/pull/27885). Runs in parallel and gates nothing here.
+
+Exit: 0.4 repeated, with flow velocity scale error bounded through takeoff and through a 20 s range gap.
+
+### Step 3: low-texture surfaces
+
+1. Weighting from 0.5 data: a noise ramp that spans the SQUAL range that occurs, the challenging-surface flag as an input, and a per-chip, per-mode floor if one floor does not fit.
+2. Blind-window behaviour: drag fusion learns wind and accelerometer bias while flow is good and counts as aiding for a bounded time when flow is blind. Published IMU-plus-drag velocity error is about 0.6 m/s RMS indoors (Leishman 2014), so this bounds velocity; it does not hold position.
+3. Offline experiment on the raw captures: correct the under-report by `1 / P(SQUAL)`. Only worth building if `P` is stable across modes, which the day and night data so far say it is not.
+
+Exit: 0.5 repeated, with hold error and time to failsafe stated for a trackable and an untrackable surface.
+
+### Step 4: height
+
+1. Height-scaled horizontal gain when flow is the only aid, applied to both the position and velocity loops, with a configurable knee. ArduPilot's fixed 4 m knee left 9 % gain at 45 m and lost position in wind ([ArduPilot/ardupilot#33569](https://github.com/ArduPilot/ardupilot/pull/33569)). Build only if 0.3(b) shows a gain-dependent peak.
+2. A longer accumulation window, if 0.3(c) helps. ArduPilot fuses 100 ms windows at every height.
+3. Desk: name the term behind the 0.15 to 0.3 rad/s residual at 12 m before changing the noise model. The measured lag-1 error autocorrelation of +0.8 is a slowly varying error, not quantization, which would be negative.
+4. Chip-to-gyro scale and mounting yaw from an offline log fit (`compare_raw_flow.py` already produces both), and a finer alignment parameter than 45° steps.
+5. Speed limit with a rotation margin and a higher floor, the direction review gave [#26786](https://github.com/PX4/PX4-Autopilot/pull/26786). Height ceiling kept when HAGL is invalid.
+
+Exit: 0.3 repeated, meeting the acceptance table.
+
+## Decisions needed
+
+1. The acceptance table, in particular a supported ceiling at rangefinder reach instead of 20 m.
+2. Splitting [#28632](https://github.com/PX4/PX4-Autopilot/pull/28632) into verified driver fixes and the unflown gate and noise defaults.
+3. Ordering against [#28000](https://github.com/PX4/PX4-Autopilot/pull/28000), which rewrites `optical_flow_control.cpp` and renames every `EKF2_OF_*` parameter. Steps 2.1 to 2.3 are small enough to land first; new parameters should follow it.
+4. Whether to coordinate with andyp1per, who is reworking the same area in ArduPilot on an ARK Flow (seven open PRs, range unusable for 25 to 79 % of his flights).
+5. Which airframe flies step 0, given the test vehicle's barometer.
+
+## Upstream constraints
+
+- Noise-default changes need flight results. [#25365](https://github.com/PX4/PX4-Autopilot/pull/25365) lowered flow noise, was approved pending flights, and died without them. [#28632](https://github.com/PX4/PX4-Autopilot/pull/28632) raises it.
+- Per-sensor logic belongs in the sensors layer (bresch on [#28000](https://github.com/PX4/PX4-Autopilot/pull/28000) and [#26924](https://github.com/PX4/PX4-Autopilot/pull/26924)). That rules out EKF2 summing flow itself.
+- The terrain state is the intended mechanism. bresch answers HAGL problems with terrain process noise ([#25258](https://github.com/PX4/PX4-Autopilot/issues/25258)); a second height filter has no sponsor.
+- Ground-effect changes need a log (dagar on [#26655](https://github.com/PX4/PX4-Autopilot/pull/26655)).
+- Thrust and airspeed barometer compensation must be fitted together (bresch on [#26924](https://github.com/PX4/PX4-Autopilot/pull/26924)), so [#27885](https://github.com/PX4/PX4-Autopilot/pull/27885) is not close.
+- Gain scheduling has not been raised with a control maintainer.
+
+## Not doing
+
+- Estimating height or flow scale from flow in a hover. It is unobservable without acceleration.
+- A separate AGL filter as ArduPilot built it ([ArduPilot/ardupilot#32389](https://github.com/ArduPilot/ardupilot/pull/32389)). ArduPilot needed it because its terrain filter lags by seconds; EKF2's does not. Its behaviour during range gaps is what step 2.4 copies.
+- ArduPilot's FlowHold mode, in-flight scale calibration (needs GPS), per-axis innovation gating, and flow noise model (constant 0.25 rad/s, `quality > 0`).
+- Per-mode SQUAL normalization ([#28625](https://github.com/PX4/PX4-Autopilot/pull/28625), on main today). The tracking knee sits at the same raw SQUAL in every mode.
+- A DroneCAN flow timestamp for now. Timing shifts of ±20 ms changed nothing in the reconstructions **[measured]**.
+- Drag-only position hold, and innovation-adaptive noise as the texture defence. With flow as the only aid the innovation cannot tell a bad sensor from a bad prediction.
+
+## Corrections to the previous draft
+
+- "Rangefinder invalid on 22 to 31 % of airborne samples at 1.4 to 4.5 m" counted ground time. Airborne it is 3 to 9 %, at lift-off and touchdown.
+- "The terrain state keeps its last value" when range is not fused. Flow updates it.
+- "Without GNSS the barometer is the height reference." Not in a hover below 5 m under conditional range aid.
+- The 13 to 21 m rangefinder reach is the LV85D on an ARK DIST, not the Flow MR.
+- The node gyro's 1 rad/s was the RawIMU stream. The flow compensation integral read 0.155 rad/s, and the gyro source does not change velocity error.
+- The floor-60 rebuild's "97 % of windows at 1.1 m/s" is 55 % of frame time at a gain of about 0.6.
+- "Everything except floor 60 has flown." `EKF2_OF_QMAX` and the new noise defaults have not.
+- The kinematic consistency check cannot trip at 15 to 20 Hz range rates; its 1σ is 3 to 14 m/s.
+- ArduPilot: [#33569](https://github.com/ArduPilot/ardupilot/pull/33569) exists to raise the gain knee, [#28982](https://github.com/ArduPilot/ardupilot/pull/28982) is raw throttle on one barometer and compiled out by default, and [#32472](https://github.com/ArduPilot/ardupilot/pull/32472) uses EKF HAGL with a minimum hold, not measured range with a timeout.
+- `performance_vs_altitude.md` misreads `hover_with_throttle_punches.ulg`: the vehicle was at 0.2 to 1.2 m by range while the barometer read +8 to +10 m.

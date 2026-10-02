@@ -11,6 +11,6 @@ Working notes. Not upstream docs.
 - [GNSS pipeline migration](gnss/pipeline_migration.md) — ownership, topic contracts and PR order for the checks move, selection and rename
 - [GNSS failover validation](gnss/failover_validation.md) — SIH cases, sim and injection gaps, and the flight-test injection tool for the receiver failover
 - [GNSS coloured position error and EKF bias states](gnss/ekf_position_bias.md) — why a higher GNSS rate makes EKF2 overconfident in position, and bias states as the fix
-- [Optical flow improvement RFC](optical_flow/improvement_rfc.md) — living draft: what limits flow velocity in PX4 and the order to fix it
+- [Optical flow position hold RFC](optical_flow/improvement_rfc.md) — draft plan: three symptoms, their mechanisms and evidence, and the test and fix steps
 - [Optical flow performance vs altitude](optical_flow/performance_vs_altitude.md)
 - [Rangefinder altitude and terrain estimation](rangefinder/altitude_and_terrain_estimation.md)
