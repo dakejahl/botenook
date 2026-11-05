@@ -13,4 +13,5 @@ Working notes. Not upstream docs.
 - [GNSS coloured position error and EKF bias states](gnss/ekf_position_bias.md) — why a higher GNSS rate makes EKF2 overconfident in position, and bias states as the fix
 - [Optical flow position hold RFC](optical_flow/improvement_rfc.md) — draft plan: three symptoms, their mechanisms and evidence, and the test and fix steps
 - [Optical flow performance vs altitude](optical_flow/performance_vs_altitude.md)
+- [Optical flow status bits in the DroneCAN quality byte](optical_flow/quality_status_bits.md) — idea: mode and challenging-surface flag in the low bits of quality instead of a new message
 - [Rangefinder altitude and terrain estimation](rangefinder/altitude_and_terrain_estimation.md)
